@@ -40,8 +40,8 @@ function CaseForm({
     setForm(prev => ({ ...prev, [field]: e.target.value }));
 
   return (
-    <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-      <div className="grid grid-cols-2 gap-3">
+    <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="cnr">CNR Number</Label>
           <Input id="cnr" placeholder="TNHC0010002024" value={form.cnr_number} onChange={set('cnr_number')} />
@@ -75,7 +75,7 @@ function CaseForm({
       </div>
       <div className="border-t pt-3">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Advocate Details</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
             <Label>Name</Label>
             <Input value={form.advocate_name} onChange={set('advocate_name')} />
@@ -92,7 +92,7 @@ function CaseForm({
       </div>
       <div className="border-t pt-3">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Client Details</p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Client Name</Label>
             <Input value={form.client_name} onChange={set('client_name')} />
@@ -199,9 +199,9 @@ export default function CasesPage() {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-1 w-full sm:w-auto">
-          <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+          <div className="relative min-w-0 flex-1 sm:max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search by case no, CNR, client, advocate…"
@@ -210,16 +210,16 @@ export default function CasesPage() {
               className="pl-9"
             />
           </div>
-          <Button variant="outline" size="icon" onClick={() => setShowFilters(!showFilters)}>
+          <Button variant="outline" size="icon" onClick={() => setShowFilters(!showFilters)} className="h-10 w-10">
             <Filter className="w-4 h-4" />
           </Button>
           {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters} className="text-muted-foreground">
+            <Button variant="ghost" size="sm" onClick={clearFilters} className="h-10 text-muted-foreground">
               <X className="w-3 h-3 mr-1" /> Clear
             </Button>
           )}
         </div>
-        <Button onClick={() => { setSelectedCase(null); setDialogMode('add'); }}>
+        <Button onClick={() => { setSelectedCase(null); setDialogMode('add'); }} className="h-10 w-full sm:w-auto">
           <Plus className="w-4 h-4 mr-1" /> Add Case
         </Button>
       </div>
@@ -227,7 +227,7 @@ export default function CasesPage() {
       {/* Filters */}
       {showFilters && (
         <Card className="p-4">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Court</Label>
               <Select value={filterCourt || 'all'} onValueChange={v => setFilterCourt(v === 'all' ? '' : v)}>
@@ -281,7 +281,7 @@ export default function CasesPage() {
               <p className="text-sm">No cases found.</p>
             </div>
           ) : (
-            <Table>
+            <Table className="min-w-[980px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Case Number</TableHead>
@@ -313,14 +313,14 @@ export default function CasesPage() {
                     <TableCell className="text-xs text-muted-foreground">{formatDate(c.created_at)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button size="icon-sm" variant="ghost" title="View" onClick={() => { setSelectedCase(c); setDialogMode('view'); }}>
+                        <Button size="icon" variant="ghost" title="View" onClick={() => { setSelectedCase(c); setDialogMode('view'); }} className="h-9 w-9">
                           <Eye className="w-3.5 h-3.5" />
                         </Button>
-                        <Button size="icon-sm" variant="ghost" title="Edit" onClick={() => { setSelectedCase(c); setDialogMode('edit'); }}>
+                        <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSelectedCase(c); setDialogMode('edit'); }} className="h-9 w-9">
                           <Edit2 className="w-3.5 h-3.5" />
                         </Button>
                         {c.active && (
-                          <Button size="icon-sm" variant="ghost" title="Deactivate" onClick={() => setDeactivateTarget(c)} className="text-red-500 hover:text-red-700">
+                          <Button size="icon" variant="ghost" title="Deactivate" onClick={() => setDeactivateTarget(c)} className="h-9 w-9 text-red-500 hover:text-red-700">
                             <PowerOff className="w-3.5 h-3.5" />
                           </Button>
                         )}
@@ -336,7 +336,7 @@ export default function CasesPage() {
 
       {/* Add/Edit Dialog */}
       <Dialog open={dialogMode === 'add' || dialogMode === 'edit'} onOpenChange={() => setDialogMode(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[90vh] max-w-[calc(100vw-1rem)] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{dialogMode === 'add' ? 'Add New Case' : 'Edit Case'}</DialogTitle>
             <DialogDescription>
@@ -354,13 +354,13 @@ export default function CasesPage() {
 
       {/* View Dialog */}
       <Dialog open={dialogMode === 'view'} onOpenChange={() => setDialogMode(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[90vh] max-w-[calc(100vw-1rem)] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Case Details — {selectedCase?.case_number}</DialogTitle>
           </DialogHeader>
           {selectedCase && (
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 {[
                   ['CNR Number', selectedCase.cnr_number],
                   ['Case Number', selectedCase.case_number],
@@ -396,7 +396,7 @@ export default function CasesPage() {
 
       {/* Deactivate Confirm */}
       <Dialog open={!!deactivateTarget} onOpenChange={() => setDeactivateTarget(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Deactivate Case</DialogTitle>
             <DialogDescription>

@@ -60,7 +60,7 @@ export default function NotificationsPage() {
   return (
     <div className="space-y-4">
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
         <Card className="bg-green-50 border-green-200 cursor-pointer hover:bg-green-100 transition-colors" onClick={() => setFilterStatus('sent')}>
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle2 className="w-8 h-8 text-green-600" />
@@ -97,7 +97,7 @@ export default function NotificationsPage() {
           <Input placeholder="Search by case, client, recipient…" value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Select value={filterType || 'all'} onValueChange={v => setFilterType(v === 'all' ? '' : v as NotificationType)}>
-          <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="All Types" /></SelectTrigger>
+          <SelectTrigger className="h-10 w-full text-xs sm:w-36"><SelectValue placeholder="All Types" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
             <SelectItem value="whatsapp">WhatsApp</SelectItem>
@@ -106,7 +106,7 @@ export default function NotificationsPage() {
           </SelectContent>
         </Select>
         <Select value={filterStatus || 'all'} onValueChange={v => setFilterStatus(v === 'all' ? '' : v as NotificationStatus)}>
-          <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="All Status" /></SelectTrigger>
+          <SelectTrigger className="h-10 w-full text-xs sm:w-36"><SelectValue placeholder="All Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="sent">Sent</SelectItem>
@@ -115,7 +115,7 @@ export default function NotificationsPage() {
           </SelectContent>
         </Select>
         {(filterType || filterStatus || search) && (
-          <Button variant="ghost" size="sm" className="text-muted-foreground text-xs"
+          <Button variant="ghost" size="sm" className="h-10 text-xs text-muted-foreground"
             onClick={() => { setFilterType(''); setFilterStatus(''); setSearch(''); }}>
             Clear
           </Button>
@@ -143,7 +143,7 @@ export default function NotificationsPage() {
               <p className="text-xs mt-1">Click <strong>Run Daily Sync</strong> to generate notification logs.</p>
             </div>
           ) : (
-            <Table>
+            <Table className="min-w-[980px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Case Number</TableHead>

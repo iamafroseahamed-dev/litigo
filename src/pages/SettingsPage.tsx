@@ -51,15 +51,17 @@ export default function SettingsPage() {
   const saveOrg = () => toast.success('Organization profile saved (demo).');
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-4xl space-y-6">
       <Tabs defaultValue="organization">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="organization" className="text-xs">Organization</TabsTrigger>
-          <TabsTrigger value="ecourts" className="text-xs">eCourts API</TabsTrigger>
-          <TabsTrigger value="twilio" className="text-xs">Twilio</TabsTrigger>
-          <TabsTrigger value="smtp" className="text-xs">SMTP / Email</TabsTrigger>
-          <TabsTrigger value="notifications" className="text-xs">Preferences</TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto pb-1">
+          <TabsList className="inline-flex h-auto min-w-[640px] items-stretch justify-start gap-1">
+            <TabsTrigger value="organization" className="text-xs">Organization</TabsTrigger>
+            <TabsTrigger value="ecourts" className="text-xs">eCourts API</TabsTrigger>
+            <TabsTrigger value="twilio" className="text-xs">Twilio</TabsTrigger>
+            <TabsTrigger value="smtp" className="text-xs">SMTP / Email</TabsTrigger>
+            <TabsTrigger value="notifications" className="text-xs">Preferences</TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* ── Organization ────────────────────────────────────── */}
         <TabsContent value="organization">
@@ -71,7 +73,7 @@ export default function SettingsPage() {
               <CardDescription>Update your organization's contact information.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label>Organization Name</Label>
                   <Input value={orgName} onChange={e => setOrgName(e.target.value)} />
@@ -110,7 +112,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <DemoNote message="eCourts API integration is currently in demo mode. Real credentials can be configured later." />
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <PlaceholderInput
                   label="eCourts API Base URL"
                   placeholder="https://api.ecourts.gov.in"
@@ -160,7 +162,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <DemoNote message="Notification integrations are currently in demo mode. Real credentials can be configured later." />
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <PlaceholderInput label="Twilio Account SID" placeholder="ACxxxxxxxxxxxxxxxx" hint="From Twilio Console" />
                 <PlaceholderInput label="Twilio Auth Token" type="password" placeholder="••••••••••••••••" hint="Keep this secret" />
                 <PlaceholderInput label="WhatsApp Number" placeholder="whatsapp:+14155238886" hint="Twilio WhatsApp sender" />
@@ -185,7 +187,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <DemoNote message="Email integration is currently in demo mode. Real SMTP credentials can be configured later." />
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <PlaceholderInput label="SMTP Host" placeholder="smtp.gmail.com" />
                 <PlaceholderInput label="SMTP Port" placeholder="587" hint="TLS: 587, SSL: 465" />
                 <PlaceholderInput label="SMTP Username" placeholder="your@email.com" />

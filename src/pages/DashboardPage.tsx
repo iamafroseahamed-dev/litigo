@@ -27,15 +27,15 @@ function MetricCard({
 }) {
   return (
     <Card>
-      <CardContent className="p-6">
+      <CardContent className="p-4 sm:p-5 lg:p-6">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className={`text-3xl font-bold mt-1 ${color}`}>{value.toLocaleString()}</p>
+            <p className={`mt-1 text-2xl font-bold sm:text-3xl ${color}`}>{value.toLocaleString()}</p>
             {subtitle && <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>}
           </div>
-          <div className={`w-12 h-12 rounded-full bg-opacity-10 flex items-center justify-center ${color.replace('text-', 'bg-').replace('-600', '-100').replace('-500', '-100')}`}>
-            <Icon className={`w-6 h-6 ${color}`} />
+          <div className={`flex h-10 w-10 items-center justify-center rounded-full bg-opacity-10 sm:h-12 sm:w-12 ${color.replace('text-', 'bg-').replace('-600', '-100').replace('-500', '-100')}`}>
+            <Icon className={`h-5 w-5 sm:h-6 sm:w-6 ${color}`} />
           </div>
         </div>
       </CardContent>
@@ -125,9 +125,9 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Demo Banner */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:px-4 sm:text-sm">
         <AlertCircle className="w-4 h-4 flex-shrink-0" />
         <span>
           <strong>Demo Mode</strong> — Using sample data. Click <strong>Run Daily Sync</strong> in the header to simulate eCourts sync.
@@ -135,7 +135,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <MetricCard title="Active Cases" value={metrics.totalActiveCases} icon={Briefcase} color="text-blue-600" subtitle="Total registered" />
         <MetricCard title="Today's Listed" value={metrics.todayListedCases} icon={List} color="text-indigo-600" subtitle="In cause list" />
         <MetricCard title="Matched Today" value={metrics.matchedCasesToday} icon={GitCompare} color="text-emerald-600" subtitle="Cases matched" />
@@ -154,14 +154,16 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {courtData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={courtData} margin={{ left: 0, right: 8 }}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="value" name="Cases" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="h-[220px] sm:h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={courtData} margin={{ left: 0, right: 8 }}>
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar dataKey="value" name="Cases" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             ) : <p className="text-sm text-muted-foreground text-center py-8">No data</p>}
           </CardContent>
         </Card>
@@ -174,17 +176,19 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {notifStatusData.some(d => d.value > 0) ? (
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={notifStatusData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value">
-                    {notifStatusData.map((_, index) => (
-                      <Cell key={index} fill={['#10b981', '#ef4444', '#f59e0b'][index]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="h-[220px] sm:h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={notifStatusData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                      {notifStatusData.map((_, index) => (
+                        <Cell key={index} fill={['#10b981', '#ef4444', '#f59e0b'][index]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-52 text-muted-foreground">
                 <Bell className="w-8 h-8 mb-2 opacity-30" />
@@ -209,7 +213,7 @@ export default function DashboardPage() {
                 <p className="text-sm">No matches yet. Run Daily Sync to populate.</p>
               </div>
             ) : (
-              <Table>
+              <Table className="min-w-[640px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Case No</TableHead>
@@ -251,7 +255,7 @@ export default function DashboardPage() {
                 <p className="text-sm">No notifications yet.</p>
               </div>
             ) : (
-              <Table>
+              <Table className="min-w-[640px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Case</TableHead>
@@ -286,7 +290,7 @@ export default function DashboardPage() {
           <CardTitle className="text-base">Recent Uploads</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
                 <TableHead>File Name</TableHead>

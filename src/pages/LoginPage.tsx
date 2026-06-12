@@ -46,14 +46,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md space-y-6">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-3 sm:p-4">
+      <div className="w-full max-w-md space-y-5 sm:space-y-6">
         {/* Brand */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 shadow-lg mb-2">
+          <div className="mb-2 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 shadow-lg sm:h-16 sm:w-16">
             <Scale className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white">Legal Case Alert</h1>
+          <h1 className="text-2xl font-bold text-white sm:text-3xl">Legal Case Alert</h1>
           <p className="text-blue-200 text-sm">Court Cause List Management & Alert System</p>
         </div>
 
@@ -98,7 +98,7 @@ export default function LoginPage() {
                   </button>
                 </div>
               </div>
-              <Button type="submit" className="w-full" loading={loading}>
+              <Button type="submit" className="h-11 w-full" loading={loading}>
                 Sign In
               </Button>
             </form>
@@ -116,7 +116,7 @@ export default function LoginPage() {
                 key={demoEmail}
                 type="button"
                 onClick={() => fillDemo(demoEmail)}
-                className="w-full text-left px-3 py-2 rounded-md bg-blue-900/50 hover:bg-blue-800/50 transition-colors text-xs text-blue-100 border border-blue-700/30"
+                className="w-full rounded-md border border-blue-700/30 bg-blue-900/50 px-3 py-2.5 text-left text-xs text-blue-100 transition-colors hover:bg-blue-800/50"
               >
                 <div className="font-medium">{org}</div>
                 <div className="text-blue-300/80 mt-0.5">{demoEmail}</div>

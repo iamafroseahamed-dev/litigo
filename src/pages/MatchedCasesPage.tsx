@@ -41,7 +41,7 @@ export default function MatchedCasesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="relative max-w-sm">
+      <div className="relative w-full sm:max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input placeholder="Search matched cases…" value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
       </div>
@@ -66,7 +66,7 @@ export default function MatchedCasesPage() {
               <p className="text-xs mt-1">Click <strong>Run Daily Sync</strong> in the header to generate matches.</p>
             </div>
           ) : (
-            <Table>
+            <Table className="min-w-[1200px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Case Number</TableHead>

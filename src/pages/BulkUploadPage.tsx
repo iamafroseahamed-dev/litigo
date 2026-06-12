@@ -109,7 +109,7 @@ export default function BulkUploadPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="max-w-4xl space-y-4 sm:space-y-6">
       {/* Instructions */}
       <Card>
         <CardHeader>
@@ -122,8 +122,8 @@ export default function BulkUploadPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-3 mb-4">
-            <Button variant="outline" onClick={downloadTemplate} className="gap-2">
+          <div className="mb-4 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <Button variant="outline" onClick={downloadTemplate} className="h-10 gap-2">
               <Download className="w-4 h-4" /> Download Template
             </Button>
             <span className="text-xs text-muted-foreground">Excel template with required column headers</span>
@@ -163,8 +163,8 @@ export default function BulkUploadPage() {
               <div className="w-14 h-14 bg-primary/10 rounded-full flex items-center justify-center mb-4">
                 <Upload className="w-7 h-7 text-primary" />
               </div>
-              <p className="text-sm font-medium">Drop your Excel file here or click to browse</p>
-              <p className="text-xs text-muted-foreground mt-1">Supports .xlsx and .xls files</p>
+              <p className="px-2 text-center text-sm font-medium">Drop your Excel file here or click to browse</p>
+              <p className="mt-1 text-center text-xs text-muted-foreground">Supports .xlsx and .xls files</p>
             </>
           )}
         </CardContent>
@@ -181,7 +181,7 @@ export default function BulkUploadPage() {
       {result && (
         <div className="space-y-4">
           {/* Summary Cards */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Card className="bg-blue-50 border-blue-200">
               <CardContent className="p-4 text-center">
                 <p className="text-2xl font-bold text-blue-700">{result.total}</p>
@@ -212,17 +212,17 @@ export default function BulkUploadPage() {
           {result.rows.some(r => r.status !== 'success') && (
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
                   <CardTitle className="text-sm text-red-700">
                     Issues ({result.rows.filter(r => r.status !== 'success').length} rows)
                   </CardTitle>
-                  <Button variant="outline" size="sm" onClick={() => exportErrors(result)} className="gap-2 text-xs">
+                  <Button variant="outline" size="sm" onClick={() => exportErrors(result)} className="h-10 gap-2 text-xs">
                     <Download className="w-3.5 h-3.5" /> Export Errors
                   </Button>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                <Table>
+                <Table className="min-w-[560px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-16">Row</TableHead>
@@ -251,13 +251,13 @@ export default function BulkUploadPage() {
           )}
 
           {result.success > 0 && (
-            <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-4 py-3 rounded-lg border border-green-200">
+            <div className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
               <CheckCircle2 className="w-4 h-4" />
               {result.success} case(s) successfully imported and are now available in the Cases module.
             </div>
           )}
           {result.duplicates > 0 && (
-            <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 px-4 py-3 rounded-lg border border-amber-200">
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
               <AlertTriangle className="w-4 h-4" />
               {result.duplicates} duplicate case(s) were skipped to prevent double entry.
             </div>

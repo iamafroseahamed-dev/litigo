@@ -110,21 +110,21 @@ export default function ReportsPage() {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
           <Select value={reportType} onValueChange={v => setReportType(v as ReportType)}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-10 w-full sm:w-52"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="notifications">Notifications Report</SelectItem>
               <SelectItem value="matches">Matched Cases Report</SelectItem>
               <SelectItem value="cases">Cases Report</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" size="icon" onClick={() => setShowFilters(!showFilters)}>
+          <Button variant="outline" size="icon" onClick={() => setShowFilters(!showFilters)} className="h-10 w-10">
             <Filter className="w-4 h-4" />
           </Button>
         </div>
-        <Button onClick={exportToExcel} className="gap-2">
+        <Button onClick={exportToExcel} className="h-10 w-full gap-2 sm:w-auto">
           <Download className="w-4 h-4" /> Export to Excel
         </Button>
       </div>
@@ -132,7 +132,7 @@ export default function ReportsPage() {
       {/* Filters */}
       {showFilters && (
         <Card className="p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
             <div className="space-y-1.5">
               <Label className="text-xs">Date From</Label>
               <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-xs" />
@@ -200,7 +200,7 @@ export default function ReportsPage() {
               <div className="w-6 h-6 border-4 border-primary border-t-transparent rounded-full animate-spin" />
             </div>
           ) : reportType === 'cases' ? (
-            <Table>
+            <Table className="min-w-[760px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Case Number</TableHead>
@@ -227,7 +227,7 @@ export default function ReportsPage() {
               </TableBody>
             </Table>
           ) : reportType === 'matches' ? (
-            <Table>
+            <Table className="min-w-[860px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Case Number</TableHead>
@@ -256,7 +256,7 @@ export default function ReportsPage() {
               </TableBody>
             </Table>
           ) : (
-            <Table>
+            <Table className="min-w-[720px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Case Number</TableHead>
