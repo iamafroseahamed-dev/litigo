@@ -27,7 +27,7 @@ async function fetchProfile(userId: string, email: string): Promise<AuthUser | n
   return {
     id: userId,
     email,
-    profile: profile as AuthUser['profile'],
+    profile: profile as unknown as AuthUser['profile'],
     organization: organization as AuthUser['organization'],
   };
 }
