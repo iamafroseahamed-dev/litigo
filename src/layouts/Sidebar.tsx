@@ -1,8 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import {
-  LayoutDashboard, Briefcase, Upload, List, GitCompare,
-  Bell, BarChart3, Settings, Scale, LogOut, ChevronLeft, ChevronRight, X, FileText,
-} from 'lucide-react';
+import { LayoutDashboard, Briefcase, Scale, LogOut, ChevronLeft, ChevronRight, X, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useState } from 'react';
@@ -10,13 +7,7 @@ import { useState } from 'react';
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/cases', label: 'Cases', icon: Briefcase },
-  { to: '/bulk-upload', label: 'Bulk Upload', icon: Upload },
-  { to: '/cause-list', label: 'Cause List', icon: List },
-  { to: '/matched-cases', label: "Today's Listings", icon: GitCompare },
-  { to: '/cause-list-report', label: 'Cause List Report', icon: FileText },
-  { to: '/notifications', label: 'Notifications', icon: Bell },
-  { to: '/reports', label: 'Reports', icon: BarChart3 },
-  { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/cause-list', label: "Today's Cause List", icon: BookOpen },
 ];
 
 interface SidebarProps {

@@ -8,12 +8,6 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 
-const DEMO_ACCOUNTS = [
-  { email: 'admin@litigodemo.com', org: 'Litigo Demo Firm' },
-  { email: 'admin@madurailegal.com', org: 'Madurai Legal Associates' },
-  { email: 'admin@southlawassociates.com', org: 'South Law Associates' },
-];
-
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -38,11 +32,6 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillDemo = (demoEmail: string) => {
-    setEmail(demoEmail);
-    setPassword('Demo@123');
   };
 
   return (
@@ -105,28 +94,8 @@ export default function LoginPage() {
           </CardContent>
         </Card>
 
-        {/* Demo Accounts */}
-        <Card className="border border-blue-500/30 bg-blue-950/50 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm text-blue-200">Demo Accounts (Password: Demo@123)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {DEMO_ACCOUNTS.map(({ email: demoEmail, org }) => (
-              <button
-                key={demoEmail}
-                type="button"
-                onClick={() => fillDemo(demoEmail)}
-                className="w-full rounded-md border border-blue-700/30 bg-blue-900/50 px-3 py-2.5 text-left text-xs text-blue-100 transition-colors hover:bg-blue-800/50"
-              >
-                <div className="font-medium">{org}</div>
-                <div className="text-blue-300/80 mt-0.5">{demoEmail}</div>
-              </button>
-            ))}
-          </CardContent>
-        </Card>
-
         <p className="text-center text-xs text-blue-300/60">
-          Phase 1 Demo Mode — Real eCourts API & notification integrations pending
+          Sign in with your organization credentials.
         </p>
       </div>
     </div>

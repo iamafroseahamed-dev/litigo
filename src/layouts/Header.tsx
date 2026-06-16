@@ -1,9 +1,6 @@
-import { Bell, Menu, RefreshCw } from 'lucide-react';
+import { Bell, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
-import { useState } from 'react';
-import { runDailySync } from '@/services/causeLists';
-import { toast } from 'sonner';
 
 interface HeaderProps {
   title: string;
@@ -11,24 +8,7 @@ interface HeaderProps {
 }
 
 export function Header({ title, onMenuClick }: HeaderProps) {
-  const { user, isDemo } = useAuth();
-  const [syncing, setSyncing] = useState(false);
-
-  const handleSync = async () => {
-    if (!user || syncing) return;
-    setSyncing(true);
-    try {
-      const result = await runDailySync(user.organization.id, isDemo);
-      toast.success(
-        `Sync complete for ${result.date}. ${result.causeListLoaded} cause list records, ${result.matchesFound} cases matched, ${result.notificationsGenerated} notifications queued.`,
-        { duration: 7000 }
-      );
-    } catch (err) {
-      toast.error('Sync failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
-    } finally {
-      setSyncing(false);
-    }
-  };
+  const { user } = useAuth();
 
   return (
     <header className="flex items-center justify-between gap-3 border-b bg-white px-3 py-3 sm:px-4 lg:px-6">
@@ -50,16 +30,6 @@ export function Header({ title, onMenuClick }: HeaderProps) {
         </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
-        <Button
-          onClick={handleSync}
-          loading={syncing}
-          className="h-10 gap-2 bg-emerald-600 px-3 text-white hover:bg-emerald-700 sm:px-4"
-          size="sm"
-        >
-          <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">Run Daily Sync</span>
-          <span className="sm:hidden">Sync</span>
-        </Button>
         <div className="relative">
           <Bell className="w-5 h-5 text-muted-foreground cursor-pointer hover:text-foreground" />
         </div>

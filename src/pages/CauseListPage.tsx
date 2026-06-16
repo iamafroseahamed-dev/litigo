@@ -1,201 +1,307 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/hooks/useAuth';
-import { fetchCauseList } from '@/services/causeLists';
-import type { CauseList } from '@/types';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useMemo } from 'react';
+import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import {
+  Table, TableBody, TableCell, TableHead,
+  TableHeader, TableRow,
+} from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, Filter, X, List, Info } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { Search, X, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import * as XLSX from 'xlsx';
 
-const STATUSES = ['Listed', 'Adjourned', 'Part Heard', 'Orders Reserved', 'Pending'];
-const COURTS = ['Madras High Court', 'City Civil Court Chennai', 'Family Court Chennai'];
-
-function StatusBadge({ status }: { status: string }) {
-  const variants: Record<string, string> = {
-    Listed: 'bg-green-100 text-green-800',
-    Adjourned: 'bg-amber-100 text-amber-800',
-    'Part Heard': 'bg-blue-100 text-blue-800',
-    'Orders Reserved': 'bg-purple-100 text-purple-800',
-    Pending: 'bg-gray-100 text-gray-800',
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${variants[status] ?? 'bg-gray-100 text-gray-700'}`}>
-      {status}
-    </span>
-  );
+interface DailyCauseListRecord {
+  id: string;
+  court_hall: string | null;
+  item_number: string | null;
+  case_number: string | null;
+  petitioner: string | null;
+  respondent: string | null;
+  party_names: string | null;
+  judge_name: string | null;
+  last_hearing_or_stage: string | null;
+  counsel_name: string | null;
+  court_name: string | null;
+  bench: string | null;
 }
 
+type SortField = 'court_hall' | 'item_number' | 'judge_name' | 'case_number';
+type SortDir = 'asc' | 'desc';
+
 export default function CauseListPage() {
-  const { isDemo } = useAuth();
-  const [causeList, setCauseList] = useState<CauseList[]>([]);
+  const today = new Date().toISOString().split('T')[0];
+
+  const [records, setRecords] = useState<DailyCauseListRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [search, setSearch] = useState('');
-  const [filterDate, setFilterDate] = useState('');
-  const [filterCourt, setFilterCourt] = useState('');
-  const [filterBench, setFilterBench] = useState('');
+
+  // Filters
+  const [filterCourtHall, setFilterCourtHall] = useState('');
   const [filterJudge, setFilterJudge] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
+  const [filterStage, setFilterStage] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try { setCauseList(await fetchCauseList(isDemo, {})); }
-    finally { setLoading(false); }
-  }, [isDemo]);
+  // Sort
+  const [sortField, setSortField] = useState<SortField>('court_hall');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true);
+      setError(false);
 
-  const filtered = causeList.filter(cl => {
-    const q = search.toLowerCase();
-    const matchSearch = !q || cl.case_number.toLowerCase().includes(q) ||
-      (cl.cnr_number ?? '').toLowerCase().includes(q) ||
-      (cl.judge_name ?? '').toLowerCase().includes(q);
-    const matchDate = !filterDate || cl.cause_date === filterDate;
-    const matchCourt = !filterCourt || cl.court_name === filterCourt;
-    const matchBench = !filterBench || cl.bench === filterBench;
-    const matchJudge = !filterJudge || (cl.judge_name ?? '').toLowerCase().includes(filterJudge.toLowerCase());
-    const matchStatus = !filterStatus || cl.status === filterStatus;
-    return matchSearch && matchDate && matchCourt && matchBench && matchJudge && matchStatus;
-  });
+      const { data, error: fetchError } = await supabase
+        .from('daily_cause_list')
+        .select('id, court_hall, item_number, case_number, petitioner, respondent, party_names, judge_name, last_hearing_or_stage, counsel_name, court_name, bench')
+        .eq('cause_date', today)
+        .order('court_hall', { ascending: true })
+        .order('item_number', { ascending: true });
 
-  const hasFilters = search || filterDate || filterCourt || filterBench || filterJudge || filterStatus;
-  const clearFilters = () => {
-    setSearch(''); setFilterDate(''); setFilterCourt(''); setFilterBench(''); setFilterJudge(''); setFilterStatus('');
-  };
+      console.log('Cause list data', data);
+      console.log('Cause list error', fetchError);
 
-  const judges = [...new Set(causeList.map(cl => cl.judge_name).filter(Boolean))].sort() as string[];
+      if (fetchError) {
+        setError(true);
+      } else {
+        setRecords((data as DailyCauseListRecord[]) ?? []);
+      }
+      setLoading(false);
+    }
+
+    fetchData();
+  }, []);
+
+  // Derived dropdown options from loaded records
+  const courtHallOptions = useMemo(() =>
+    [...new Set(records.map(r => r.court_hall).filter(Boolean))].sort() as string[],
+    [records]);
+
+  const judgeOptions = useMemo(() =>
+    [...new Set(records.map(r => r.judge_name).filter(Boolean))].sort() as string[],
+    [records]);
+
+  const stageOptions = useMemo(() =>
+    [...new Set(records.map(r => r.last_hearing_or_stage).filter(Boolean))].sort() as string[],
+    [records]);
+
+  // Client-side filter + search + sort
+  const filtered = useMemo(() => {
+    let rows = records;
+
+    if (filterCourtHall) rows = rows.filter(r => r.court_hall === filterCourtHall);
+    if (filterJudge)     rows = rows.filter(r => r.judge_name === filterJudge);
+    if (filterStage)     rows = rows.filter(r => r.last_hearing_or_stage === filterStage);
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      rows = rows.filter(r =>
+        [r.court_hall, r.case_number, r.petitioner, r.respondent, r.party_names, r.judge_name, r.counsel_name]
+          .some(v => v?.toLowerCase().includes(q))
+      );
+    }
+
+    return [...rows].sort((a, b) => {
+      const av = (a[sortField] ?? '').toString().toLowerCase();
+      const bv = (b[sortField] ?? '').toString().toLowerCase();
+      const cmp = av.localeCompare(bv, undefined, { numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [records, search, filterCourtHall, filterJudge, filterStage, sortField, sortDir]);
+
+  const hasActiveFilters = filterCourtHall || filterJudge || filterStage;
+
+  function clearFilters() {
+    setFilterCourtHall('');
+    setFilterJudge('');
+    setFilterStage('');
+    setSearch('');
+  }
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  }
+
+  function SortIcon({ field }: { field: SortField }) {
+    if (sortField !== field) return <span className="ml-1 text-muted-foreground/40">↕</span>;
+    return <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  }
 
   return (
-    <div className="space-y-4">
-      {/* Demo note */}
-      <div className="flex items-start gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-        <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
-        <span>
-          Showing today's sample cause list data. Click <strong>Run Daily Sync</strong> in the header to refresh.
-          Real eCourts API integration is configured in <strong>Settings</strong>.
-        </span>
+    <div className="p-6 space-y-4">
+      {/* Title + count */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-semibold">Today's Cause List</h1>
+          {!loading && !error && (
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Total Records: {records.length}
+              {filtered.length !== records.length && ` · Showing: ${filtered.length}`}
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Export */}
+          {!loading && !error && filtered.length > 0 && (
+            <Button variant="outline" size="sm" className="h-9 gap-1" onClick={() => {
+              const rows = filtered.map(r => ({
+                'Court Hall': r.court_hall ?? '',
+                'Item No': r.item_number ?? '',
+                'Case Number': r.case_number ?? '',
+                'Petitioner': r.petitioner ?? '',
+                'Respondent': r.respondent ?? '',
+                'Party Names': r.party_names ?? '',
+                'Judge': r.judge_name ?? '',
+                'Stage': r.last_hearing_or_stage ?? '',
+                'Counsel': r.counsel_name ?? '',
+              }));
+              const ws = XLSX.utils.json_to_sheet(rows);
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, 'Cause List');
+              XLSX.writeFile(wb, `cause_list_${today}.xlsx`);
+            }}>
+              <Download className="h-3.5 w-3.5" /> Export Excel
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* Toolbar */}
+      {/* Filter + Search bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 sm:max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search by case no, CNR, judge…" value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        {/* Court Hall filter */}
+        <Select value={filterCourtHall || '__all__'} onValueChange={v => setFilterCourtHall(v === '__all__' ? '' : v)}>
+          <SelectTrigger className="h-9 w-44 text-sm">
+            <SelectValue placeholder="All Court Halls" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Court Halls</SelectItem>
+            {courtHallOptions.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        {/* Judge filter */}
+        <Select value={filterJudge || '__all__'} onValueChange={v => setFilterJudge(v === '__all__' ? '' : v)}>
+          <SelectTrigger className="h-9 w-52 text-sm">
+            <SelectValue placeholder="All Judges" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Judges</SelectItem>
+            {judgeOptions.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        {/* Stage filter */}
+        <Select value={filterStage || '__all__'} onValueChange={v => setFilterStage(v === '__all__' ? '' : v)}>
+          <SelectTrigger className="h-9 w-44 text-sm">
+            <SelectValue placeholder="All Stages" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Stages</SelectItem>
+            {stageOptions.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        {/* Search */}
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search case, petitioner, counsel..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-8 h-9 text-sm"
+          />
         </div>
-        <Button variant="outline" size="icon" onClick={() => setShowFilters(!showFilters)} className="h-10 w-10">
-          <Filter className="w-4 h-4" />
-        </Button>
-        {hasFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-10 gap-1 text-muted-foreground">
-            <X className="w-3 h-3" /> Clear
+
+        {/* Clear filters */}
+        {(hasActiveFilters || search) && (
+          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 gap-1 text-muted-foreground">
+            <X className="h-3.5 w-3.5" />
+            Clear
           </Button>
         )}
       </div>
 
-      {/* Filters */}
-      {showFilters && (
-        <Card className="p-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Date</Label>
-              <Input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="h-8 text-xs" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Court</Label>
-              <Select value={filterCourt || 'all'} onValueChange={v => setFilterCourt(v === 'all' ? '' : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {COURTS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Bench</Label>
-              <Input placeholder="All" value={filterBench} onChange={e => setFilterBench(e.target.value)} className="h-8 text-xs" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Judge</Label>
-              <Select value={filterJudge || 'all'} onValueChange={v => setFilterJudge(v === 'all' ? '' : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {judges.map(j => <SelectItem key={j} value={j}>{j}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Status</Label>
-              <Select value={filterStatus || 'all'} onValueChange={v => setFilterStatus(v === 'all' ? '' : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </Card>
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
+          Loading cause list...
+        </div>
+      )}
+
+      {/* Error */}
+      {!loading && error && (
+        <div className="flex items-center justify-center py-24 text-sm text-destructive">
+          Unable to load cause list records.
+        </div>
+      )}
+
+      {/* Empty */}
+      {!loading && !error && filtered.length === 0 && (
+        <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
+          No cause list records found for the selected date.
+        </div>
       )}
 
       {/* Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <List className="w-4 h-4 text-indigo-600" />
-            Cause List
-            <Badge variant="outline" className="ml-1">{filtered.length}</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex justify-center py-12">
-              <div className="w-6 h-6 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <List className="w-8 h-8 mb-2 mx-auto opacity-30" />
-              <p className="text-sm">No cause list records found.</p>
-            </div>
-          ) : (
-            <Table className="min-w-[1100px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Cause Date</TableHead>
-                  <TableHead>Court Name</TableHead>
-                  <TableHead>Bench</TableHead>
-                  <TableHead>Court Hall</TableHead>
-                  <TableHead>Judge</TableHead>
-                  <TableHead>Listing No</TableHead>
-                  <TableHead>Case Number</TableHead>
-                  <TableHead>CNR Number</TableHead>
-                  <TableHead>Status</TableHead>
+      {!loading && !error && filtered.length > 0 && (
+        <div className="overflow-x-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead
+                  className="whitespace-nowrap cursor-pointer select-none"
+                  onClick={() => toggleSort('court_hall')}
+                >
+                  Court Hall<SortIcon field="court_hall" />
+                </TableHead>
+                <TableHead
+                  className="whitespace-nowrap cursor-pointer select-none"
+                  onClick={() => toggleSort('item_number')}
+                >
+                  Item No<SortIcon field="item_number" />
+                </TableHead>
+                <TableHead
+                  className="whitespace-nowrap cursor-pointer select-none"
+                  onClick={() => toggleSort('case_number')}
+                >
+                  Case Number<SortIcon field="case_number" />
+                </TableHead>
+                <TableHead>Petitioner</TableHead>
+                <TableHead>Respondent</TableHead>
+                <TableHead className="whitespace-nowrap">Party Names</TableHead>
+                <TableHead
+                  className="cursor-pointer select-none"
+                  onClick={() => toggleSort('judge_name')}
+                >
+                  Judge<SortIcon field="judge_name" />
+                </TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead>Counsel</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map(r => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-medium">{r.court_hall ?? '—'}</TableCell>
+                  <TableCell>{r.item_number ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">{r.case_number ?? '—'}</TableCell>
+                  <TableCell>{r.petitioner ?? '—'}</TableCell>
+                  <TableCell>{r.respondent ?? '—'}</TableCell>
+                  <TableCell>{r.party_names ?? '—'}</TableCell>
+                  <TableCell>{r.judge_name ?? '—'}</TableCell>
+                  <TableCell>{r.last_hearing_or_stage ?? '—'}</TableCell>
+                  <TableCell>{r.counsel_name ?? '—'}</TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map(cl => (
-                  <TableRow key={cl.id}>
-                    <TableCell className="text-xs font-medium">{formatDate(cl.cause_date)}</TableCell>
-                    <TableCell className="text-xs">{cl.court_name}</TableCell>
-                    <TableCell className="text-xs">{cl.bench}</TableCell>
-                    <TableCell className="text-xs font-medium">{cl.court_no}</TableCell>
-                    <TableCell className="text-xs max-w-[180px] truncate">{cl.judge_name}</TableCell>
-                    <TableCell className="text-center font-semibold text-sm">{cl.item_number ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs">{cl.case_number}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{cl.cnr_number || '—'}</TableCell>
-                    <TableCell><StatusBadge status={cl.status ?? ''} /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }

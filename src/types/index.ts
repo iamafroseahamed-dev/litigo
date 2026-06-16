@@ -20,23 +20,44 @@ export interface Profile {
   organization?: Organization;
 }
 
+export type CLAPartyStatus = 'Petitioner' | 'Respondent' | 'Appellant' | 'Defendant' | 'Complainant' | 'Accused' | '';
+export type Sensitivity = 'Sensitive' | 'Non-Sensitive' | '';
+export type CaseStatus = 'Active' | 'Pending' | 'Disposed' | '';
+export type FollowUpStatus = 'Urgent' | 'Update Required' | 'No Action' | 'Inactive' | '';
+
 export interface Case {
   id: string;
   organization_id: string;
-  cnr_number: string;
+  cnr_number: string | null;
   case_number: string;
-  court_name: string;
-  bench: string;
-  petitioner: string;
-  respondent: string;
-  advocate_name: string;
-  advocate_mobile: string;
-  advocate_email: string;
-  client_name: string;
-  client_mobile: string;
-  client_whatsapp: string;
-  client_email: string;
+  court_name: string | null;
+  district: string | null;
+  section: string | null;
+  petitioner: string | null;
+  respondent: string | null;
+  prayer: string | null;
+  subject_matter: string | null;
+  cla_party_status: string | null;
+  sensitivity: string | null;
+  case_status: string | null;
+  nature_of_disposal: string | null;
+  last_hearing_date: string | null;
+  last_hearing_update: string | null;
+  next_hearing_date: string | null;
+  advocate_name: string | null;
+  advocate_mobile: string | null;
+  advocate_email: string | null;
+  client_name: string | null;
+  client_mobile: string | null;
+  client_whatsapp: string | null;
+  client_email: string | null;
+  follow_up_status: string | null;
   active: boolean;
+  source_file: string | null;
+  source_sheet: string | null;
+  import_batch: string | null;
+  case_section: string | null;
+  followup_status: string | null;
   created_at: string;
   updated_at: string;
 }
