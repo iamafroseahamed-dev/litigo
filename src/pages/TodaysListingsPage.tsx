@@ -34,7 +34,8 @@ import {
 } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Search, X, Eye, ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react';
+import { Search, X, Eye, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type { Case } from '@/types';
 
 interface DailyCauseListRecord {
@@ -88,6 +89,7 @@ interface CaseDetailsResponse {
   tables?: CaseDetailsTable[];
   links?: CaseDetailsLink[];
   raw_html?: string;
+  summary_fields?: Record<string, string>;
 }
 
 type SortField = 'court_hall' | 'item_number' | 'case_number' | 'next_hearing_date';
@@ -102,7 +104,7 @@ type SectionKey =
   | 'orders'
   | 'documents'
   | 'scrutiny'
-  | 'full-content';
+  | 'case-timeline';
 
 const PAGE_SIZE = 20;
 const CL_SELECT =
@@ -112,17 +114,19 @@ const SECTION_CONFIG: Array<{ key: SectionKey; title: string; keywords: string[]
   {
     key: 'case-summary',
     title: 'Case Summary',
-    keywords: ['case summary', 'case details', 'registration', 'filing', 'case type', 'cnr', 'diary'],
+    // Backend titles: 'Case Details', 'Case Status', 'Category Details', 'Sub Matters', 'Linked Cases'
+    keywords: ['case details', 'case summary', 'registration', 'filing', 'cnr', 'category details', 'sub matters', 'linked cases'],
   },
   {
     key: 'case-status',
     title: 'Case Status',
-    keywords: ['status', 'stage', 'disposal', 'disposed', 'listing status'],
+    keywords: ['case status', 'status', 'disposal', 'disposed', 'first hearing', 'decision date', 'nature of disposal'],
   },
   {
     key: 'parties',
     title: 'Parties',
-    keywords: ['party', 'petitioner', 'respondent', 'appellant', 'defendant', 'complainant'],
+    // Backend title: 'Parties' (role, name, advocate 3-col table)
+    keywords: ['parties', 'petitioner', 'respondent', 'appellant', 'defendant', 'complainant'],
   },
   {
     key: 'advocates',
@@ -132,31 +136,34 @@ const SECTION_CONFIG: Array<{ key: SectionKey; title: string; keywords: string[]
   {
     key: 'acts',
     title: 'Acts / Applicable Laws',
-    keywords: ['act', 'law', 'section', 'provision', 'ipc', 'crpc'],
+    keywords: ['acts', 'act', 'under act', 'section', 'applicable law'],
   },
   {
     key: 'hearing-history',
     title: 'Hearing History',
-    keywords: ['hearing', 'history', 'proceeding', 'business', 'listing', 'next date'],
+    // Backend title: 'History of Case Hearing'
+    keywords: ['history of case hearing', 'hearing history', 'hearing date', 'business on date', 'cause list type'],
   },
   {
     key: 'orders',
     title: 'Orders',
-    keywords: ['order', 'judgment', 'pronouncement'],
+    keywords: ['orders', 'order no', 'order date', 'pdf link', 'order details', 'order number'],
   },
   {
     key: 'documents',
     title: 'Documents',
-    keywords: ['document', 'attachment', 'annexure', 'pdf', 'download'],
+    // Backend title: 'Document Details'
+    keywords: ['document details', 'document filed', 'date of receiving', 'filed by'],
   },
   {
     key: 'scrutiny',
     title: 'Scrutiny / Objections',
-    keywords: ['scrutiny', 'objection', 'defect', 'deficiency', 'compliance'],
+    // Backend title: 'Scrutiny / Objections'
+    keywords: ['scrutiny', 'objection', 'compliance date', 'receipt date', 'objection compliance'],
   },
   {
-    key: 'full-content',
-    title: 'Full Extracted Content',
+    key: 'case-timeline',
+    title: 'Case Timeline',
     keywords: [],
   },
 ];
@@ -210,6 +217,27 @@ function DynamicTable({ table }: { table: CaseDetailsTable }) {
     ? table.headers
     : Array.from({ length: maxColumns }, (_, index) => `Column ${index + 1}`);
 
+  // Detect which column index holds PDF links
+  const pdfColIdx = headers.findIndex((h) =>
+    ['pdf link', 'pdf', 'order details', 'view'].some((kw) => h.toLowerCase().includes(kw)),
+  );
+
+  const renderCell = (value: string, colIdx: number) => {
+    if (colIdx === pdfColIdx && value && value.startsWith('http')) {
+      return (
+        <a
+          href={value}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-blue-700 hover:underline text-xs"
+        >
+          <ExternalLink className="h-3 w-3" /> View PDF
+        </a>
+      );
+    }
+    return value || '—';
+  };
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -240,7 +268,7 @@ function DynamicTable({ table }: { table: CaseDetailsTable }) {
                     <TableRow key={`${table.title}-${rowIndex}`}>
                       {headers.map((_, colIndex) => (
                         <TableCell key={`${table.title}-${rowIndex}-${colIndex}`} className="align-top whitespace-pre-wrap">
-                          {row[colIndex] || '—'}
+                          {renderCell(row[colIndex] ?? '', colIndex)}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -285,7 +313,10 @@ function groupTablesBySection(tables: CaseDetailsTable[]) {
   for (const table of tables) {
     const haystack = getTableSearchText(table);
     const matchedSection = SECTION_CONFIG.find(
-      (config) => config.key !== 'full-content' && config.keywords.some((keyword) => haystack.includes(keyword)),
+      (config) =>
+        config.key !== 'case-timeline' &&
+        config.keywords.length > 0 &&
+        config.keywords.some((keyword) => haystack.includes(keyword)),
     );
 
     if (matchedSection) {
@@ -299,7 +330,9 @@ function groupTablesBySection(tables: CaseDetailsTable[]) {
 }
 
 function getLinksForSection(section: SectionKey, links: CaseDetailsLink[]) {
-  const keywordMap: Record<Exclude<SectionKey, 'full-content'>, string[]> = {
+  if (section === 'case-timeline') return [];
+
+  const keywordMap: Record<Exclude<SectionKey, 'case-timeline'>, string[]> = {
     'case-summary': ['summary', 'case'],
     'case-status': ['status', 'stage'],
     parties: ['party', 'petitioner', 'respondent'],
@@ -311,241 +344,352 @@ function getLinksForSection(section: SectionKey, links: CaseDetailsLink[]) {
     scrutiny: ['scrutiny', 'objection', 'defect'],
   };
 
-  if (section === 'full-content') return links;
+  const keywords = keywordMap[section as Exclude<SectionKey, 'case-timeline'>] ?? [];
+  if (!keywords.length) return [];
 
-  const keywords = keywordMap[section];
   return links.filter((link) => {
     const haystack = `${link.text} ${link.href}`.toLowerCase();
     return keywords.some((keyword) => haystack.includes(keyword));
   });
 }
 
-function SectionLinks({ links }: { links: CaseDetailsLink[] }) {
-  if (links.length === 0) return null;
+// ─── Field extractor ─────────────────────────────────────────────────────────
+
+function extractField(
+  tables: CaseDetailsTable[],
+  summaryFields: Record<string, string>,
+  ...searchKeys: string[]
+): string {
+  for (const [key, value] of Object.entries(summaryFields)) {
+    for (const sk of searchKeys) {
+      if (key.toLowerCase().includes(sk.toLowerCase())) return value;
+    }
+  }
+  for (const table of tables) {
+    for (const row of table.rows) {
+      if (row.length === 2) {
+        for (const sk of searchKeys) {
+          if (row[0].toLowerCase().includes(sk.toLowerCase())) return row[1];
+        }
+      }
+    }
+  }
+  return '';
+}
+
+// ─── Case Timeline ─────────────────────────────────────────────────────────────
+
+type TimelineEventType = 'filing' | 'registration' | 'hearing' | 'order' | 'disposal' | 'other';
+interface TimelineEvent { date: string; label: string; type: TimelineEventType }
+
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function normDateStr(raw: string): string {
+  const m = raw.match(/^(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{4})$/);
+  if (!m) return raw;
+  const mo = (MONTH_ABBR.indexOf(m[2]) + 1).toString().padStart(2, '0');
+  return `${m[3]}-${mo}-${m[1].padStart(2, '0')}`;
+}
+
+function TimelineSection({
+  tables,
+  summaryFields,
+}: {
+  tables: CaseDetailsTable[];
+  summaryFields: Record<string, string>;
+}) {
+  const events: TimelineEvent[] = useMemo(() => {
+    const list: TimelineEvent[] = [];
+    const filingDate = extractField(tables, summaryFields, 'Filing Date', 'Date of Filing');
+    const regDate = extractField(tables, summaryFields, 'Registration Date', 'Date of Registration');
+    const disposalDate = extractField(tables, summaryFields, 'Disposal Date', 'Date of Disposal');
+
+    if (filingDate) list.push({ date: filingDate, label: 'Case Filed', type: 'filing' });
+    if (regDate && regDate !== filingDate) list.push({ date: regDate, label: 'Case Registered', type: 'registration' });
+
+    const histTable = tables.find((t) => {
+      const h = (t.title + ' ' + t.headers.join(' ')).toLowerCase();
+      return ['hearing', 'history', 'proceeding', 'business', 'listing'].some((kw) => h.includes(kw));
+    });
+    if (histTable) {
+      const dateIdx = histTable.headers.findIndex((h) =>
+        ['hearing date', 'date'].some((kw) => h.toLowerCase().includes(kw)),
+      );
+      const purposeIdx = histTable.headers.findIndex((h) =>
+        ['purpose', 'business', 'stage', 'next'].some((kw) => h.toLowerCase().includes(kw)),
+      );
+      if (dateIdx >= 0) {
+        histTable.rows.slice(0, 30).forEach((row) => {
+          const date = row[dateIdx] ?? '';
+          if (!date || date === '—') return;
+          const purpose = purposeIdx >= 0 ? (row[purposeIdx] ?? '') : '';
+          list.push({ date, label: purpose ? `Hearing — ${purpose}` : 'Hearing', type: 'hearing' });
+        });
+      }
+    }
+
+    const orderTable = tables.find((t) =>
+      ['order', 'judgment'].some((kw) => (t.title + t.headers.join(' ')).toLowerCase().includes(kw)),
+    );
+    if (orderTable) {
+      const dateIdx = orderTable.headers.findIndex((h) => h.toLowerCase().includes('date'));
+      if (dateIdx >= 0) {
+        orderTable.rows.slice(0, 10).forEach((row) => {
+          const date = row[dateIdx] ?? '';
+          if (!date || date === '—') return;
+          list.push({ date, label: 'Order', type: 'order' });
+        });
+      }
+    }
+
+    if (disposalDate) list.push({ date: disposalDate, label: 'Case Disposed', type: 'disposal' });
+
+    list.sort((a, b) => normDateStr(a.date).localeCompare(normDateStr(b.date)));
+    return list;
+  }, [tables, summaryFields]);
+
+  if (events.length === 0) {
+    return (
+      <p className="py-2 text-sm text-muted-foreground">
+        Timeline data not available in the extracted response.
+      </p>
+    );
+  }
+
+  const dotColor: Record<TimelineEventType, string> = {
+    filing: 'bg-blue-500',
+    registration: 'bg-green-500',
+    hearing: 'bg-amber-400',
+    order: 'bg-purple-500',
+    disposal: 'bg-red-500',
+    other: 'bg-muted-foreground',
+  };
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">Extracted Links</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {links.map((link, index) => (
-          <a
-            key={`${link.href}-${index}`}
-            href={link.href}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-2 text-sm text-blue-700 hover:underline"
-          >
-            <ExternalLink className="h-4 w-4" />
-            <span className="break-all">{link.text}</span>
-          </a>
+    <div className="relative pl-7">
+      <div className="absolute left-2.5 top-1 bottom-1 w-px bg-border" />
+      <div className="space-y-2.5">
+        {events.map((ev, i) => (
+          <div key={`${ev.date}-${i}`} className="relative">
+            <div className={cn('absolute -left-5 top-3 h-2.5 w-2.5 rounded-full ring-2 ring-background', dotColor[ev.type])} />
+            <div className="rounded-md border bg-card px-3 py-2 text-sm">
+              <span className="font-mono text-[10px] text-muted-foreground">{ev.date}</span>
+              <p className="mt-0.5 font-medium text-xs">{ev.label}</p>
+            </div>
+          </div>
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
-function CaseDetailsDialog({
+// ─── Main Case Details Modal ──────────────────────────────────────────────────
+
+function CaseDetailsModal({
   open,
   onOpenChange,
   loading,
   error,
   details,
+  cnrNumber,
+  onRetry,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   loading: boolean;
   error: string | null;
   details: CaseDetailsResponse | null;
+  cnrNumber: string | null;
+  onRetry: () => void;
 }) {
   const tables = details?.tables ?? [];
   const links = details?.links ?? [];
-  const groupedData = useMemo(() => groupTablesBySection(tables), [tables]);
-  const defaultOpenSections = SECTION_CONFIG.map((section) => section.key);
+  const summaryFields = details?.summary_fields ?? {};
+  const { grouped } = useMemo(() => groupTablesBySection(tables), [tables]);
+  const defaultOpen = ['case-summary', 'case-status', 'parties', 'hearing-history', 'orders', 'documents', 'scrutiny'];
+
+  const topFields = useMemo(() => ({
+    cnr:         details?.cnr_number || cnrNumber || extractField(tables, summaryFields, 'CNR Number', 'CNR'),
+    caseNumber:  details?.case_number || extractField(tables, summaryFields, 'Registration Number', 'Registration No', 'Case Number', 'Case No'),
+    filingNum:   extractField(tables, summaryFields, 'Filing Number', 'Filing No', 'Diary Number', 'Diary No'),
+    regNum:      extractField(tables, summaryFields, 'Registration Number', 'Registration No', 'Reg No', 'Reg. No'),
+    status:      extractField(tables, summaryFields, 'Case Status', 'Current Status', 'Nature of Disposal', 'Stage'),
+    caseType:    extractField(tables, summaryFields, 'Judicial Branch', 'Category', 'Case Type', 'Type of Case'),
+    court:       extractField(tables, summaryFields, 'Coram', 'Court Name', 'High Court', 'Court'),
+    bench:       extractField(tables, summaryFields, 'Bench Type', 'Bench Name', 'Bench'),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [tables, summaryFields, details?.cnr_number, details?.case_number, cnrNumber]);
+
+  const statusVariant = (s: string) => {
+    const lower = s.toLowerCase();
+    if (lower.includes('pending')) return 'warning' as const;
+    if (lower.includes('disposed')) return 'secondary' as const;
+    if (lower.includes('active')) return 'success' as const;
+    return 'outline' as const;
+  };
+
+  const sectionContent = (key: SectionKey) => {
+    if (key === 'case-timeline') {
+      return <TimelineSection tables={tables} summaryFields={summaryFields} />;
+    }
+
+    const sectionTables = grouped.get(key) ?? [];
+    const sectionLinks = getLinksForSection(key, links);
+    if (sectionTables.length === 0 && sectionLinks.length === 0) {
+      return (
+        <p className="py-2 text-sm text-muted-foreground">
+          No data found in the extracted response for this section.
+        </p>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {sectionTables.map((t, i) => <DynamicTable key={`${key}-${i}`} table={t} />)}
+      </div>
+    );
+  };
+
+  const hasContent = details && ((details.tables?.length ?? 0) > 0 || (details.text ?? '').trim().length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl p-0">
-        <DialogHeader className="border-b px-6 py-4">
-          <DialogTitle>Case Details</DialogTitle>
-          <DialogDescription>
-            {loading ? 'Fetching case details...' : 'Rendered directly from the Python backend eCourts response.'}
-          </DialogDescription>
+      <DialogContent
+        className="flex flex-col gap-0 overflow-hidden p-0"
+        style={{ width: '90vw', maxWidth: '90vw', height: '90vh', maxHeight: '90vh' }}
+      >
+        {/* Fixed header */}
+        <DialogHeader className="shrink-0 border-b bg-background px-6 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <DialogTitle className="text-lg">Case Details</DialogTitle>
+              <DialogDescription className="font-mono text-xs">
+                {loading
+                  ? 'Fetching case details from eCourts...'
+                  : `CNR: ${details?.cnr_number || cnrNumber || '—'}`}
+              </DialogDescription>
+            </div>
+            {details?.searchType && (
+              <Badge variant="outline" className="mt-1 shrink-0">{details.searchType}</Badge>
+            )}
+          </div>
         </DialogHeader>
 
-        <ScrollArea className="h-[80vh] px-6 py-4">
-          {loading ? (
+        {/* Loading */}
+        {loading && (
+          <div className="flex flex-1 flex-col gap-4 overflow-auto p-6">
             <LoadingDetails />
-          ) : error ? (
-            <Card className="border-destructive/30 bg-destructive/5">
-              <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
-            </Card>
-          ) : !details || ((details.tables?.length ?? 0) === 0 && !(details.text ?? '').trim()) ? (
-            <Card>
-              <CardContent className="pt-6 text-sm text-muted-foreground">No case details found.</CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-4 pb-6">
-              <div className="grid gap-3 md:grid-cols-3">
-                <Card>
-                  <CardContent className="pt-4">
-                    <p className="text-xs text-muted-foreground">Search Type</p>
-                    <div className="mt-2">
-                      <Badge variant="outline">{details.searchType || '—'}</Badge>
+          </div>
+        )}
+
+        {/* Error */}
+        {!loading && error && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="text-sm font-medium text-destructive">Unable to fetch case details.</p>
+            <p className="text-xs text-muted-foreground">{error}</p>
+            <Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>
+          </div>
+        )}
+
+        {/* Empty */}
+        {!loading && !error && !hasContent && (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <p className="text-sm text-muted-foreground">No case details available for this CNR Number.</p>
+          </div>
+        )}
+
+        {/* Main content */}
+        {!loading && !error && hasContent && (
+          <>
+            {/* Top summary strip */}
+            {Object.values(topFields).some(Boolean) && (
+              <div className="shrink-0 border-b bg-muted/30 px-6 py-3">
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {topFields.cnr && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">CNR</p>
+                      <p className="mt-0.5 font-mono text-xs font-bold">{topFields.cnr}</p>
                     </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-4">
-                    <p className="text-xs text-muted-foreground">CNR Number</p>
-                    <p className="mt-2 break-all font-mono text-sm">{details.cnr_number || '—'}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-4">
-                    <p className="text-xs text-muted-foreground">Case Number</p>
-                    <p className="mt-2 break-all font-mono text-sm">{details.case_number || '—'}</p>
-                  </CardContent>
-                </Card>
+                  )}
+                  {topFields.caseNumber && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Case No</p>
+                      <p className="mt-0.5 font-mono text-xs font-bold">{topFields.caseNumber}</p>
+                    </div>
+                  )}
+                  {topFields.filingNum && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Filing No</p>
+                      <p className="mt-0.5 font-mono text-xs font-bold">{topFields.filingNum}</p>
+                    </div>
+                  )}
+                  {topFields.regNum && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Reg. No</p>
+                      <p className="mt-0.5 font-mono text-xs font-bold">{topFields.regNum}</p>
+                    </div>
+                  )}
+                  {topFields.status && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Status</p>
+                      <div className="mt-1">
+                        <Badge variant={statusVariant(topFields.status)} className="text-[10px]">
+                          {topFields.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  )}
+                  {topFields.caseType && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Case Type</p>
+                      <p className="mt-0.5 text-xs font-semibold">{topFields.caseType}</p>
+                    </div>
+                  )}
+                  {topFields.court && (
+                    <div className="max-w-[200px] shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Court</p>
+                      <p className="mt-0.5 text-xs font-semibold leading-tight">{topFields.court}</p>
+                    </div>
+                  )}
+                  {topFields.bench && (
+                    <div className="shrink-0 rounded-md border bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Bench</p>
+                      <p className="mt-0.5 text-xs font-semibold">{topFields.bench}</p>
+                    </div>
+                  )}
+                </div>
               </div>
+            )}
 
-              <Accordion type="multiple" defaultValue={defaultOpenSections} className="w-full">
-                {SECTION_CONFIG.map((section) => {
-                  const grouped = groupedData.grouped.get(section.key) ?? [];
-                  const sectionTables = section.key === 'full-content' ? tables : grouped;
-                  const sectionLinks = getLinksForSection(section.key, links);
-
-                  return (
-                    <AccordionItem key={section.key} value={section.key}>
-                      <AccordionTrigger>{section.title}</AccordionTrigger>
+            {/* Accordion sections */}
+            <ScrollArea className="flex-1">
+              <div className="px-6 py-4 pb-10">
+                <Accordion type="multiple" defaultValue={defaultOpen} className="w-full">
+                  {SECTION_CONFIG.map((section) => (
+                    <AccordionItem key={section.key} value={section.key} className="border-b">
+                      <AccordionTrigger className="py-3 text-sm font-medium hover:no-underline">
+                        <span className="flex items-center gap-2">
+                          {section.title}
+                          {section.key !== 'case-timeline' &&
+                            (grouped.get(section.key as SectionKey) ?? []).length > 0 && (
+                              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                                {(grouped.get(section.key as SectionKey) ?? []).length}
+                              </Badge>
+                            )}
+                        </span>
+                      </AccordionTrigger>
                       <AccordionContent>
-                        <div className="space-y-4">
-                          {section.key === 'full-content' ? (
-                            <>
-                              {sectionTables.map((table, index) => (
-                                <DynamicTable key={`${section.key}-${index}-${table.title}`} table={table} />
-                              ))}
-                              {groupedData.unmatched.length > 0 && (
-                                <Card>
-                                  <CardHeader className="pb-3">
-                                    <CardTitle className="text-base">Uncategorized Extracted Tables</CardTitle>
-                                  </CardHeader>
-                                  <CardContent className="space-y-4">
-                                    {groupedData.unmatched.map((table, index) => (
-                                      <DynamicTable key={`unmatched-${index}-${table.title}`} table={table} />
-                                    ))}
-                                  </CardContent>
-                                </Card>
-                              )}
-                              <SectionLinks links={sectionLinks} />
-                              <Card>
-                                <CardHeader className="pb-3">
-                                  <CardTitle className="text-base">Full Text</CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                  <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-foreground">
-                                    {details.text || 'No extracted text found.'}
-                                  </pre>
-                                </CardContent>
-                              </Card>
-                            </>
-                          ) : sectionTables.length > 0 || sectionLinks.length > 0 ? (
-                            <>
-                              {sectionTables.map((table, index) => (
-                                <DynamicTable key={`${section.key}-${index}-${table.title}`} table={table} />
-                              ))}
-                              <SectionLinks links={sectionLinks} />
-                            </>
-                          ) : (
-                            <Card>
-                              <CardContent className="pt-6 text-sm text-muted-foreground">
-                                No {section.title.toLowerCase()} content found in the extracted response.
-                              </CardContent>
-                            </Card>
-                          )}
+                        <div className="pb-2">
+                          {sectionContent(section.key as SectionKey)}
                         </div>
                       </AccordionContent>
                     </AccordionItem>
-                  );
-                })}
-              </Accordion>
-            </div>
-          )}
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CaptchaDialog({
-  open,
-  onOpenChange,
-  image,
-  value,
-  onChange,
-  onSubmit,
-  onRefresh,
-  submitting,
-  message,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  image: string | null;
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: () => void;
-  onRefresh: () => void;
-  submitting: boolean;
-  message: string | null;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Enter Captcha</DialogTitle>
-          <DialogDescription>
-            Case number search on eCourts requires a manual captcha entry.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          {message && <p className="text-sm text-muted-foreground">{message}</p>}
-
-          <Card>
-            <CardContent className="flex flex-col items-center gap-4 pt-6">
-              {image ? (
-                <img src={image} alt="eCourts captcha" className="h-16 rounded border bg-white px-2 py-1" />
-              ) : (
-                <div className="flex h-16 w-full items-center justify-center rounded border border-dashed text-sm text-muted-foreground">
-                  Captcha image unavailable.
-                </div>
-              )}
-
-              <div className="flex w-full items-center gap-2">
-                <Input
-                  value={value}
-                  onChange={(event) => onChange(event.target.value)}
-                  placeholder="Enter captcha"
-                  autoComplete="off"
-                  maxLength={6}
-                />
-                <Button variant="outline" size="icon" onClick={onRefresh} disabled={submitting}>
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
+                  ))}
+                </Accordion>
               </div>
-            </CardContent>
-          </Card>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-              Cancel
-            </Button>
-            <Button onClick={onSubmit} disabled={submitting || value.trim().length === 0}>
-              {submitting ? 'Submitting...' : 'Fetch Case Details'}
-            </Button>
-          </div>
-        </div>
+            </ScrollArea>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -827,21 +971,86 @@ export default function TodaysListingsPage() {
     return <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
-  const fetchCaseDetails = useCallback(async (record: MatchedRecord, captcha?: string) => {
+  const fetchCaseDetails = useCallback(async (record: MatchedRecord, captcha?: string, captchaTokenOverride?: string) => {
     setSelectedRecord(record);
     setDetailsDialogOpen(true);
-    setDetailsLoading(true);
     setDetailsError(null);
     setCaseDetails(null);
 
-    try {
-      const payload: Record<string, string> = {
-        cnr_number: normalizeText(record.causeList.cnr_number),
-        case_number: normalizeText(record.causeList.case_number),
-      };
+    // Prefer cause list CNR, then fall back to the internally stored case CNR
+    const cnr =
+      normalizeText(record.causeList.cnr_number) ||
+      normalizeText(record.case.cnr_number);
 
-      if (captcha) payload.captcha = captcha.trim();
-      if (captchaToken) payload.captcha_token = captchaToken;
+    const caseNum =
+      normalizeText(record.causeList.case_number) ||
+      normalizeText(record.case.case_number);
+
+    // If no CNR and no captcha yet, trigger captcha challenge first
+    if (!cnr && !captcha) {
+      if (!caseNum) {
+        setDetailsLoading(false);
+        setDetailsError('Neither CNR nor Case Number is available for this record.');
+        return;
+      }
+      setDetailsLoading(true);
+      try {
+        const res = await fetch('/api/ecourts/case-details', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ case_number: caseNum }),
+        });
+
+        let data: CaseDetailsResponse | null = null;
+        try { data = (await res.json()) as CaseDetailsResponse; } catch { data = null; }
+
+        if (!res.ok) {
+          throw new Error(
+            data?.message ||
+              `Backend returned ${res.status}. Make sure the Python backend is running on port 8001.`,
+          );
+        }
+
+        if (data?.requiresCaptcha) {
+          setDetailsDialogOpen(false);
+          setCaptchaDialogOpen(true);
+          setCaptchaValue('');
+          setCaptchaImage(data.captchaImage ?? null);
+          setCaptchaToken(data.captchaToken ?? null);
+          setCaptchaMessage(data.message ?? 'Captcha required for case number search.');
+          return;
+        }
+        if (!data?.success) { setDetailsError(data?.message || 'Unable to fetch case details.'); return; }
+        setCaseDetails(data);
+        // Back-fill discovered CNR into the table row so it shows immediately
+        if (data?.cnr_number) {
+          const discoveredCnr = data.cnr_number.trim();
+          setMatchedRecords((prev) =>
+            prev.map((r) =>
+              r === record
+                ? {
+                    ...r,
+                    causeList: { ...r.causeList, cnr_number: r.causeList.cnr_number || discoveredCnr },
+                    case: { ...r.case, cnr_number: r.case.cnr_number || discoveredCnr },
+                  }
+                : r,
+            ),
+          );
+        }
+      } catch (err) {
+        console.error('[TodaysListingsPage] details fetch error:', err);
+        setDetailsError('Unable to fetch case details.');
+      } finally {
+        setDetailsLoading(false);
+      }
+      return;
+    }
+
+    setDetailsLoading(true);
+    try {
+      const payload: Record<string, string> = cnr
+        ? { cnr_number: cnr }
+        : { case_number: caseNum, captcha: captcha!.trim(), captcha_token: captchaTokenOverride ?? '' };
 
       const response = await fetch('/api/ecourts/case-details', {
         method: 'POST',
@@ -850,14 +1059,13 @@ export default function TodaysListingsPage() {
       });
 
       let data: CaseDetailsResponse | null = null;
-      try {
-        data = (await response.json()) as CaseDetailsResponse;
-      } catch {
-        data = null;
-      }
+      try { data = (await response.json()) as CaseDetailsResponse; } catch { data = null; }
 
       if (!response.ok) {
-        throw new Error(data?.message || 'Unable to fetch case details.');
+        throw new Error(
+          data?.message ||
+            `Backend returned ${response.status}. Make sure the Python backend is running on port 8001.`,
+        );
       }
 
       if (data?.requiresCaptcha) {
@@ -866,46 +1074,54 @@ export default function TodaysListingsPage() {
         setCaptchaValue('');
         setCaptchaImage(data.captchaImage ?? null);
         setCaptchaToken(data.captchaToken ?? null);
-        setCaptchaMessage(data.message ?? 'Captcha is required for case number search.');
-        setDetailsLoading(false);
+        setCaptchaMessage(data.message ?? 'Invalid captcha. Please try again.');
         return;
       }
 
-      if (!data?.success) {
-        setDetailsError(data?.message || 'Unable to fetch case details.');
-        return;
-      }
+      if (!data?.success) { setDetailsError(data?.message || 'Unable to fetch case details.'); return; }
 
       setCaseDetails(data);
+      // Back-fill discovered CNR into the table row so it shows immediately
+      if (data?.cnr_number) {
+        const discoveredCnr = data.cnr_number.trim();
+        setMatchedRecords((prev) =>
+          prev.map((r) =>
+            r === record
+              ? {
+                  ...r,
+                  causeList: { ...r.causeList, cnr_number: r.causeList.cnr_number || discoveredCnr },
+                  case: { ...r.case, cnr_number: r.case.cnr_number || discoveredCnr },
+                }
+              : r,
+          ),
+        );
+      }
     } catch (err) {
       console.error('[TodaysListingsPage] details fetch error:', err);
       setDetailsError('Unable to fetch case details.');
     } finally {
       setDetailsLoading(false);
     }
-  }, [captchaToken]);
+  }, []);
 
   const refreshCaptcha = useCallback(async () => {
     if (!selectedRecord) return;
     setCaptchaSubmitting(true);
     try {
-      const response = await fetch('/api/ecourts/case-details', {
+      const caseNum =
+        normalizeText(selectedRecord.causeList.case_number) ||
+        normalizeText(selectedRecord.case.case_number);
+      const res = await fetch('/api/ecourts/case-details', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cnr_number: '',
-          case_number: normalizeText(selectedRecord.causeList.case_number),
-        }),
+        body: JSON.stringify({ case_number: caseNum }),
       });
-      const data = (await response.json()) as CaseDetailsResponse;
-      if (!response.ok) throw new Error(data.message || 'Unable to refresh captcha.');
-
+      const data = (await res.json()) as CaseDetailsResponse;
       setCaptchaImage(data.captchaImage ?? null);
       setCaptchaToken(data.captchaToken ?? null);
-      setCaptchaMessage(data.message ?? 'Enter the captcha shown above.');
+      setCaptchaMessage(data.message ?? 'Enter the new captcha shown above.');
       setCaptchaValue('');
-    } catch (err) {
-      console.error('[TodaysListingsPage] captcha refresh error:', err);
+    } catch {
       setCaptchaMessage('Unable to refresh captcha. Please try again.');
     } finally {
       setCaptchaSubmitting(false);
@@ -916,9 +1132,13 @@ export default function TodaysListingsPage() {
     if (!selectedRecord || !captchaValue.trim()) return;
     setCaptchaSubmitting(true);
     setCaptchaDialogOpen(false);
-    await fetchCaseDetails(selectedRecord, captchaValue.trim());
+    await fetchCaseDetails(selectedRecord, captchaValue.trim(), captchaToken ?? undefined);
     setCaptchaSubmitting(false);
   }
+
+  const retryCaseDetails = useCallback(() => {
+    if (selectedRecord) fetchCaseDetails(selectedRecord);
+  }, [selectedRecord, fetchCaseDetails]);
 
   return (
     <>
@@ -1093,7 +1313,9 @@ export default function TodaysListingsPage() {
                       <TableRow key={record.causeList.id}>
                         <TableCell className="whitespace-nowrap font-medium">{record.causeList.court_hall ?? '—'}</TableCell>
                         <TableCell className="whitespace-nowrap">{record.causeList.item_number ?? '—'}</TableCell>
-                        <TableCell className="whitespace-nowrap font-mono text-xs">{record.causeList.cnr_number ?? '—'}</TableCell>
+                        <TableCell className="whitespace-nowrap font-mono text-xs">
+                          {record.causeList.cnr_number || record.case.cnr_number || '—'}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs">{record.causeList.case_number ?? '—'}</TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs">{record.case.case_number ?? '—'}</TableCell>
                         <TableCell className="max-w-[160px] truncate" title={record.causeList.petitioner ?? undefined}>
@@ -1143,25 +1365,63 @@ export default function TodaysListingsPage() {
         )}
       </div>
 
-      <CaseDetailsDialog
+      <CaseDetailsModal
         open={detailsDialogOpen}
         onOpenChange={setDetailsDialogOpen}
         loading={detailsLoading}
         error={detailsError}
         details={caseDetails}
+        cnrNumber={
+          normalizeText(selectedRecord?.causeList.cnr_number) ||
+          normalizeText(selectedRecord?.case.cnr_number) ||
+          null
+        }
+        onRetry={retryCaseDetails}
       />
 
-      <CaptchaDialog
-        open={captchaDialogOpen}
-        onOpenChange={setCaptchaDialogOpen}
-        image={captchaImage}
-        value={captchaValue}
-        onChange={setCaptchaValue}
-        onSubmit={submitCaptcha}
-        onRefresh={refreshCaptcha}
-        submitting={captchaSubmitting}
-        message={captchaMessage}
-      />
+      <Dialog open={captchaDialogOpen} onOpenChange={setCaptchaDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enter Captcha</DialogTitle>
+            <DialogDescription>Case number search on eCourts requires captcha verification.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {captchaMessage && <p className="text-sm text-muted-foreground">{captchaMessage}</p>}
+            <Card>
+              <CardContent className="flex flex-col items-center gap-4 pt-6">
+                {captchaImage ? (
+                  <img src={captchaImage} alt="eCourts captcha" className="h-16 rounded border bg-white px-2 py-1" />
+                ) : (
+                  <div className="flex h-16 w-full items-center justify-center rounded border border-dashed text-sm text-muted-foreground">
+                    Captcha image unavailable.
+                  </div>
+                )}
+                <div className="flex w-full items-center gap-2">
+                  <Input
+                    value={captchaValue}
+                    onChange={(e) => setCaptchaValue(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && captchaValue.trim() && submitCaptcha()}
+                    placeholder="Enter captcha"
+                    autoComplete="off"
+                    maxLength={6}
+                  />
+                  <Button variant="outline" size="icon" onClick={refreshCaptcha} disabled={captchaSubmitting}>
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setCaptchaDialogOpen(false)} disabled={captchaSubmitting}>
+                Cancel
+              </Button>
+              <Button onClick={submitCaptcha} disabled={captchaSubmitting || captchaValue.trim().length === 0}>
+                {captchaSubmitting ? 'Submitting...' : 'Fetch Case Details'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
