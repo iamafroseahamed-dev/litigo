@@ -119,6 +119,20 @@ export interface Notification {
   case?: Case;
 }
 
+export interface NotificationLog {
+  id?: string;
+  case_id: string;
+  notification_type: string;
+  recipient_name: string | null;
+  recipient_email: string | null;
+  recipient_mobile: string | null;
+  subject: string;
+  message: string;
+  status: string;
+  sent_at: string | null;
+  created_at?: string;
+}
+
 export interface UploadedFile {
   id: string;
   organization_id: string;
