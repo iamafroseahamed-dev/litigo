@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/cases', label: 'Cases', icon: Briefcase },
   { to: '/cause-list', label: "Today's Cause List", icon: BookOpen },
+  { to: '/todays-listings', label: "Today's Listings", icon: BookOpen },
 ];
 
 interface SidebarProps {

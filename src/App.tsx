@@ -7,6 +7,7 @@ import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import CasesPage from "@/pages/CasesPage";
 import CauseListPage from "@/pages/CauseListPage";
+import TodaysListingsPage from "@/pages/TodaysListingsPage";
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/cases" element={<CasesPage />} />
               <Route path="/cause-list" element={<CauseListPage />} />
+              <Route path="/todays-listings" element={<TodaysListingsPage />} />
             </Route>
           </Route>
 

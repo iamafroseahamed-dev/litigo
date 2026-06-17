@@ -8,6 +8,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/cases': 'Case Management',
   '/bulk-upload': 'Bulk Upload',
   '/cause-list': 'Daily Cause List',
+  '/matched-listings': "Today's Matched Listings",
   '/matched-cases': "Today's Listings",
   '/cause-list-report': 'Cause List Report',
   '/notifications': 'Notifications',

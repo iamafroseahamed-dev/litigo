@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+requests
+beautifulsoup4
+pymupdf
+psycopg[binary]
+python-dotenv
+pydantic-settings
