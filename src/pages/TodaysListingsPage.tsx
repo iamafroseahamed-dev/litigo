@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -283,17 +283,45 @@ function DynamicTable({ table }: { table: CaseDetailsTable }) {
   );
 }
 
-function LoadingDetails() {
+const ECOURTS_LOADING_MESSAGES = [
+  'Connecting to eCourts server…',
+  'Waiting for response from hcservices.ecourts.gov.in…',
+  'Fetching case history and hearing records…',
+  'eCourts can be slow — please hang on…',
+  'Almost there…',
+];
+
+function LoadingDetails({ elapsedSeconds }: { elapsedSeconds: number }) {
+  const msgIndex = Math.min(
+    Math.floor(elapsedSeconds / 9),
+    ECOURTS_LOADING_MESSAGES.length - 1,
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <Skeleton className="h-20" />
-        <Skeleton className="h-20" />
-        <Skeleton className="h-20" />
+    <div className="flex flex-col items-center gap-6 py-10">
+      {/* Spinner */}
+      <div className="h-11 w-11 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+
+      {/* Status text */}
+      <div className="text-center space-y-1.5">
+        <p className="text-sm font-medium">{ECOURTS_LOADING_MESSAGES[msgIndex]}</p>
+        <p className="text-xs text-muted-foreground">
+          {elapsedSeconds > 0 ? `${elapsedSeconds}s elapsed` : 'Starting…'}
+          {elapsedSeconds >= 15 && ' · eCourts typically takes 15–45 s'}
+        </p>
       </div>
-      <Skeleton className="h-10" />
-      <Skeleton className="h-40" />
-      <Skeleton className="h-32" />
+
+      {/* Skeleton placeholders so the dialog doesn't feel empty */}
+      <div className="w-full space-y-3 pt-2">
+        <div className="grid gap-3 md:grid-cols-3">
+          <Skeleton className="h-20" />
+          <Skeleton className="h-20" />
+          <Skeleton className="h-20" />
+        </div>
+        <Skeleton className="h-10" />
+        <Skeleton className="h-40" />
+        <Skeleton className="h-28" />
+      </div>
     </div>
   );
 }
@@ -504,6 +532,19 @@ function CaseDetailsModal({
   onRetry: () => void;
   localCase: Case | null;
 }) {
+  // Elapsed-time counter — starts ticking when loading begins, resets when done
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (loading) {
+      setElapsedSeconds(0);
+      intervalRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [loading]);
+
   const tables = details?.tables ?? [];
   const links = details?.links ?? [];
   const summaryFields = details?.summary_fields ?? {};
@@ -613,7 +654,7 @@ function CaseDetailsModal({
         {/* Loading */}
         {loading && (
           <div className="flex flex-1 flex-col gap-4 overflow-auto p-6">
-            <LoadingDetails />
+            <LoadingDetails elapsedSeconds={elapsedSeconds} />
           </div>
         )}
 
