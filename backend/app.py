@@ -11,6 +11,8 @@ import fitz
 import psycopg
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +24,7 @@ class Settings(BaseSettings):
     DATABASE_URL: Optional[str] = None
     SUPABASE_URL: str = 'https://iyohifpzsqjxcrgrtsza.supabase.co'
     SUPABASE_SERVICE_ROLE_KEY: str = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5b2hpZnB6c3FqeGNyZ3J0c3phIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTU4OTQ1MiwiZXhwIjoyMDk3MTY1NDUyfQ.BLz5-PeIc5TTjSAiYuWxnGgJYrVnqjh0RYwdirJn_50'
-    MHC_TIMEOUT_SECONDS: int = 30
+    MHC_TIMEOUT_SECONDS: int = 60  # read timeout; connect timeout is fixed at 10s
 
     class Config:
         env_file = '.env'
@@ -298,14 +300,33 @@ def get_captcha_headers() -> Dict[str, str]:
     }
 
 
-def create_captcha_challenge() -> Dict[str, Any]:
+ECOURTS_REQUEST_TIMEOUT = (10, settings.MHC_TIMEOUT_SECONDS)  # (connect, read)
+
+
+def _ecourts_session() -> requests.Session:
+    """Return a Session pre-configured with retry-on-network-error for eCourts requests."""
     session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+    return session
+
+
+def create_captcha_challenge() -> Dict[str, Any]:
+    session = _ecourts_session()
 
     try:
         page_response = session.get(
             ECOURTS_MAIN_URL,
             headers={'User-Agent': 'Mozilla/5.0', 'Referer': ECOURTS_BASE_URL + '/'},
-            timeout=settings.MHC_TIMEOUT_SECONDS,
+            timeout=ECOURTS_REQUEST_TIMEOUT,
         )
         page_response.raise_for_status()
     except requests.RequestException as exc:
@@ -322,7 +343,7 @@ def create_captcha_challenge() -> Dict[str, Any]:
         image_response = session.get(
             captcha_image_url,
             headers=get_captcha_headers(),
-            timeout=settings.MHC_TIMEOUT_SECONDS,
+            timeout=ECOURTS_REQUEST_TIMEOUT,
         )
         image_response.raise_for_status()
     except requests.RequestException as exc:
@@ -996,7 +1017,7 @@ def post_ecourts_case_details(request: CaseDetailsRequest) -> Dict[str, Any]:
 
     if cnr_number:
         try:
-            response = requests.get(
+            response = _ecourts_session().get(
                 ECOURTS_CNR_URL,
                 params={
                     'state_code': '10',
@@ -1011,7 +1032,7 @@ def post_ecourts_case_details(request: CaseDetailsRequest) -> Dict[str, Any]:
                     'Referer': ECOURTS_BASE_URL + '/',
                     'X-Requested-With': 'XMLHttpRequest',
                 },
-                timeout=settings.MHC_TIMEOUT_SECONDS,
+                timeout=ECOURTS_REQUEST_TIMEOUT,
             )
             response.raise_for_status()
         except requests.RequestException as exc:
@@ -1085,7 +1106,7 @@ def post_ecourts_case_details(request: CaseDetailsRequest) -> Dict[str, Any]:
                 'X-Requested-With': 'XMLHttpRequest',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             },
-            timeout=settings.MHC_TIMEOUT_SECONDS,
+            timeout=ECOURTS_REQUEST_TIMEOUT,
         )
         response.raise_for_status()
     except requests.RequestException as exc:

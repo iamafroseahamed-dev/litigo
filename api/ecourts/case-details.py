@@ -20,6 +20,8 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -30,8 +32,24 @@ ECOURTS_CASE_NUMBER_URL = (
     f"{ECOURTS_BASE_URL}/hcservices/cases_qry/index_qry.php?action_code=showRecords"
 )
 CASE_TYPE_MAPPING: Dict[str, str] = {"WP": "49"}
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = (10, 60)  # (connect_timeout, read_timeout) in seconds
 CAPTCHA_TOKEN_TTL = timedelta(minutes=10)
+
+
+def _ecourts_session() -> requests.Session:
+    """Return a Session with retry-on-network-error behaviour."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +92,7 @@ def has_invalid_captcha(html: str) -> bool:
 
 def create_captcha_challenge() -> Dict[str, Any]:
     """Fetch the eCourts captcha image; return image data-URI + cookie token."""
-    session = requests.Session()
+    session = _ecourts_session()
     page_resp = session.get(
         ECOURTS_MAIN_URL,
         headers={"User-Agent": "Mozilla/5.0", "Referer": ECOURTS_BASE_URL + "/"},
@@ -127,7 +145,7 @@ def session_from_token(captcha_token: str) -> requests.Session:
     if datetime.utcnow() > expires:
         raise ValueError("Captcha token has expired.")
 
-    session = requests.Session()
+    session = _ecourts_session()
     session.cookies.update(token_data.get("cookies", {}))
     return session
 
@@ -660,7 +678,7 @@ def handle_request(
 ) -> Dict[str, Any]:
     if cnr_number:
         try:
-            resp = requests.get(
+            resp = _ecourts_session().get(
                 ECOURTS_CNR_URL,
                 params={
                     "state_code": "10",
@@ -679,7 +697,7 @@ def handle_request(
             )
             resp.raise_for_status()
         except requests.RequestException as exc:
-            return {"success": False, "message": f"Unable to fetch case details from eCourts: {exc}"}
+            return {"success": False, "message": f"eCourts did not respond in time. Please try again. ({exc})"}
         return build_case_details_response(
             search_type="CNR",
             cnr_number=cnr_number,
@@ -746,7 +764,7 @@ def handle_request(
         )
         resp.raise_for_status()
     except requests.RequestException as exc:
-        return {"success": False, "message": f"Unable to fetch case details from eCourts: {exc}"}
+        return {"success": False, "message": f"eCourts did not respond in time. Please try again. ({exc})"}
 
     if has_invalid_captcha(resp.text):
         return build_requires_captcha_response(case_number, "Invalid captcha. Please try again.")
