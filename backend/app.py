@@ -4,12 +4,15 @@ import json
 import re
 import secrets
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
+import xml.etree.ElementTree as ET
 
+import ddddocr
 import fitz
 import psycopg
 import requests
+import urllib3
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -37,13 +40,89 @@ ECOURTS_BASE_URL = 'https://hcservices.ecourts.gov.in'
 ECOURTS_MAIN_URL = f'{ECOURTS_BASE_URL}/hcservices/main.php?v=1'
 ECOURTS_CNR_URL = f'{ECOURTS_BASE_URL}/hcservices/cases_qry/o_civil_case_history.php'
 ECOURTS_CASE_NUMBER_URL = f'{ECOURTS_BASE_URL}/hcservices/cases_qry/index_qry.php?action_code=showRecords'
-CASE_TYPE_MAPPING = {
-    'WP': '49',
+
+# ecourtindiaHC endpoints (used for case-number search + history)
+HC_BASE_URL = 'https://hcservices.ecourts.gov.in/ecourtindiaHC'
+HC_CAPTCHA_URL = f'{HC_BASE_URL}/securimage/securimage_show.php'
+HC_CASE_NO_QUERY_URL = f'{HC_BASE_URL}/cases/case_no_qry.php'
+HC_HISTORY_URL = f'{HC_BASE_URL}/cases/o_civil_case_history.php'
+# eCourts case type string codes used in the case_no_qry.php API.
+# Keys are canonical normalized forms (from _normalize_case_type).
+# Values are the exact string codes eCourts expects in the `case_type` field.
+# Add new entries here as new case types are encountered.
+CASE_TYPE_MAPPING: Dict[str, str] = {
+    'WP':     'WP_C',    # Writ Petition
+    'WA':     'WA',      # Writ Appeal
+    'WMP':    'WMP',     # Writ Miscellaneous Petition
+    'CRLOP':  'WP_CRL',  # Criminal Original Petition
+    'CRLA':   'CRL.A',   # Criminal Appeal
+    'CRLRC':  'CRL.RC',  # Criminal Revision Case
+    'CRLMC':  'CRL.MC',  # Criminal Miscellaneous Case
+    'CMP':    'MA',      # Civil Miscellaneous Petition (eCourts: MA)
+    'AS':     'AS',      # Appeal Suit
+    'SA':     'SA',      # Second Appeal
+    'OS':     'OS',      # Original Suit
+    'OSA':    'OSA',     # Original Side Appeal
+    'TCP':    'TCP',     # Tax Case Petition
+    'TCA':    'TCA',     # Tax Case Appeal
+    'CRP':    'CRP',     # Civil Revision Petition
+    'CONTP':  'CONMT',   # Contempt Petition (eCourts: CONMT)
+    'LPA':    'LPA',     # Letters Patent Appeal
+    'MP':     'MP',      # Miscellaneous Petition
+    'RFA':    'RFA',     # Regular First Appeal
+    'CMA':    'CMA',     # Civil Miscellaneous Appeal
+    'HCP':    'HCP',     # Habeas Corpus Petition
+    'PIL':    'PIL',     # Public Interest Litigation
+    'EP':     'EP',      # Election Petition
+    'OP':     'OP',      # Original Petition
 }
 CAPTCHA_SESSION_TTL = timedelta(minutes=10)
 
 captcha_sessions: Dict[str, Dict[str, Any]] = {}
 captcha_sessions_lock = Lock()
+
+# Lazy-initialised ddddocr singleton (model load is expensive)
+_ocr_instance: Optional[Any] = None
+_ocr_lock = Lock()
+
+
+def _get_ocr() -> Any:
+    global _ocr_instance
+    with _ocr_lock:
+        if _ocr_instance is None:
+            _ocr_instance = ddddocr.DdddOcr(show_ad=False)
+    return _ocr_instance
+
+
+def _auto_solve_captcha_hc() -> Tuple[requests.Session, str]:
+    """Create a fresh ecourtindiaHC session, fetch the captcha image, and OCR it.
+
+    Returns (session, solved_captcha_text). The session has the captcha cookie
+    already bound so it can be used directly in the next POST request.
+    Raises HTTPException(502) if the captcha image cannot be fetched.
+    """
+    ocr = _get_ocr()
+    session = _ecourts_session()
+    try:
+        session.get(
+            HC_BASE_URL + '/',
+            headers={'User-Agent': 'Mozilla/5.0'},
+            verify=False,
+            timeout=ECOURTS_REQUEST_TIMEOUT,
+        )
+        cap_resp = session.get(
+            HC_CAPTCHA_URL,
+            headers={'User-Agent': 'Mozilla/5.0', 'Referer': HC_BASE_URL + '/'},
+            timeout=ECOURTS_REQUEST_TIMEOUT,
+        )
+        cap_resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f'Unable to fetch captcha image: {exc}') from exc
+    captcha_text = ocr.classification(cap_resp.content)
+    return session, captcha_text
+
+# Suppress SSL warnings for MHC government site (certificate chain issues)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI(title='Litigo API Backend')
 
@@ -60,6 +139,10 @@ class CaseDetailsRequest(BaseModel):
     case_number: Optional[str] = None
     captcha: Optional[str] = None
     captcha_token: Optional[str] = None
+
+
+class LookupCnrRequest(BaseModel):
+    case_number: str
 
 
 class ExtractPdfTextRequest(BaseModel):
@@ -184,6 +267,103 @@ def get_matched_listings() -> List[Dict[str, Any]]:
         return matched_rows
     except requests.RequestException as exc:
         raise HTTPException(status_code=500, detail='Unable to load matched listings.') from exc
+
+
+MHC_XML_BASE = 'https://mhc.tn.gov.in/judis/clists/clists-madras/causelists/xml/cause_{date}.xml'
+
+
+def _parse_mhc_xml(xml_bytes: bytes, cause_date_str: str, xml_url: str) -> List[Dict[str, Any]]:
+    root = ET.fromstring(xml_bytes)
+    seen: Set[Tuple[str, str, str, str]] = set()
+    rows: List[Dict[str, Any]] = []
+
+    for court in root.iter('court'):
+        court_hall = court.findtext('courtno') or ''
+        judge_name = court.findtext('judge1') or ''
+
+        for stage in court.iter('stage'):
+            stage_name = stage.findtext('stagename') or ''
+
+            for case in stage.iter('casedetails'):
+                case_type = case.findtext('mcasetype') or ''
+                case_no = case.findtext('mcaseno') or ''
+                case_year = case.findtext('mcaseyr') or ''
+                case_number = f'{case_type}/{case_no}/{case_year}'
+                petitioner = case.findtext('pname') or ''
+                respondent = case.findtext('rname') or ''
+                item_number = case.findtext('serial_no') or ''
+                counsel_name = case.findtext('mpadv') or ''
+
+                dedup_key = (cause_date_str, court_hall, item_number, case_number)
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+
+                party_names = ' | '.join(filter(None, [petitioner, respondent]))
+
+                rows.append({
+                    'cause_date': cause_date_str,
+                    'source_type': 'xml',
+                    'source_url': xml_url,
+                    'court_name': 'Madras High Court',
+                    'bench': 'Chennai',
+                    'court_hall': court_hall,
+                    'item_number': item_number,
+                    'case_number': case_number,
+                    'cnr_number': None,
+                    'petitioner': petitioner,
+                    'respondent': respondent,
+                    'party_names': party_names,
+                    'judge_name': judge_name,
+                    'section': None,
+                    'district': None,
+                    'prayer': None,
+                    'last_hearing_or_stage': stage_name,
+                    'counsel_name': counsel_name,
+                    'raw_text': None,
+                    'raw_data': None,
+                    'import_status': 'parsed',
+                    'updated_at': datetime.utcnow().isoformat(),
+                })
+
+    return rows
+
+
+@app.get('/api/todays-cause-list')
+def get_todays_cause_list() -> List[Dict[str, Any]]:
+    today = date.today()
+    cause_date_str = today.isoformat()
+    date_for_url = today.strftime('%d%m%Y')
+    xml_url = MHC_XML_BASE.format(date=date_for_url)
+
+    try:
+        xml_resp = requests.get(xml_url, timeout=(10, 30), verify=False)
+        xml_resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Today's cause list XML is not available: {exc}",
+        ) from exc
+
+    try:
+        parsed_rows = _parse_mhc_xml(xml_resp.content, cause_date_str, xml_url)
+    except ET.ParseError as exc:
+        # MHC likely returned an HTML error page instead of XML (holiday / not yet published)
+        preview = xml_resp.content[:200].decode('utf-8', errors='replace')
+        raise HTTPException(
+            status_code=502,
+            detail=f'Cause list XML is malformed or not yet published (ParseError: {exc}). Response preview: {preview}',
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f'Failed to parse cause list XML: {exc}',
+        ) from exc
+
+    if not parsed_rows:
+        raise HTTPException(status_code=404, detail="No records found in today's cause list XML.")
+
+    return parsed_rows
 
 
 def to_array(value: Any) -> List[Any]:
@@ -357,19 +537,73 @@ def create_captcha_challenge() -> Dict[str, Any]:
     }
 
 
+def _normalize_case_type(raw: str) -> str:
+    """Canonicalize a raw case type string before CASE_TYPE_MAPPING lookup.
+
+    Examples:
+      W.P.       → WP
+      W.P.No.    → WP
+      WP(MD)     → WP
+      WP.MD      → WP
+      CRL.OP     → CRLOP
+      CRL.O.P    → CRLOP
+      CRL O.P    → CRLOP
+      CONT.P     → CONTP
+      W.A.       → WA
+      C.M.P.     → CMP
+    """
+    s = raw.strip().upper()
+    # Drop parenthetical bench codes: WP(MD) → WP, WA(MD/MHC) → WA
+    s = re.sub(r'\([^)]*\)', '', s)
+    # Remove dots and spaces
+    s = s.replace('.', '').replace(' ', '')
+    # Remove trailing NO (W.P.No → WPNO → WP)
+    s = re.sub(r'NO$', '', s)
+    # Collapse consecutive duplicate letters that dots introduced:
+    # CRLOP stays CRLOP; CONTP stays CONTP — no collapsing needed
+    return s.strip()
+
+
 def parse_case_number(case_number: str) -> Optional[Tuple[str, str, str]]:
+    """Parse various case number formats into (canonical_type, case_no, year).
+
+    Handles:
+      WP/4232/2024           → WP, 4232, 2024
+      W.P.No.4232/2024       → WP, 4232, 2024
+      WP(MD)/4232/2024       → WP, 4232, 2024
+      CRL.OP/1234/2025       → CRLOP, 1234, 2025
+      CRL.O.P.No.1234/2025   → CRLOP, 1234, 2025
+      WA/100/2024            → WA, 100, 2024
+      CMP/500/2024           → CMP, 500, 2024
+    """
+    original = case_number
     cleaned = clean_text(case_number).replace(' ', '')
-    parts = [part for part in cleaned.split('/') if part]
-    if len(parts) != 3:
-        return None
 
-    case_type_text = parts[0].upper()
-    case_no = re.sub(r'\D', '', parts[1])
-    case_year = re.sub(r'\D', '', parts[2])
-    if not case_type_text or not case_no or not case_year:
-        return None
+    # Strategy 1: Standard TYPE/NO/YEAR
+    parts = [p for p in cleaned.split('/') if p]
+    if len(parts) == 3:
+        case_type_raw = parts[0]
+        case_no = re.sub(r'\D', '', parts[1])
+        case_year = re.sub(r'\D', '', parts[2])
+        if case_type_raw and case_no and case_year:
+            canonical = _normalize_case_type(case_type_raw)
+            print(f'[parse_case_number] original={original!r} → type_raw={case_type_raw!r} canonical={canonical!r} no={case_no} year={case_year}')
+            return canonical, case_no, case_year
 
-    return case_type_text, case_no, case_year
+    # Strategy 2: TYPE+NO/YEAR  (e.g. W.P.No.4232/2024 → 2 slash parts)
+    if len(parts) == 2:
+        m = re.match(r'^([A-Za-z.]+?)\.?(\d+)$', parts[0])
+        if m:
+            case_type_raw = m.group(1)
+            case_no = m.group(2)
+            case_year = re.sub(r'\D', '', parts[1])
+            if case_type_raw and case_no and case_year:
+                canonical = _normalize_case_type(case_type_raw)
+                print(f'[parse_case_number] original={original!r} → type_raw={case_type_raw!r} canonical={canonical!r} no={case_no} year={case_year}')
+                return canonical, case_no, case_year
+
+    print(f'[parse_case_number] FAILED to parse: {original!r}')
+    return None
 
 
 def get_table_title(table: Any, index: int) -> str:
@@ -1000,6 +1234,35 @@ def build_requires_captcha_response(case_number: str, message: str) -> Dict[str,
     }
 
 
+def _create_hc_captcha_challenge(case_number: str) -> Dict[str, Any]:
+    """Download captcha directly from ecourtindiaHC securimage endpoint."""
+    session = _ecourts_session()
+    try:
+        img_resp = session.get(
+            HC_CAPTCHA_URL,
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': HC_BASE_URL + '/',
+            },
+            timeout=ECOURTS_REQUEST_TIMEOUT,
+        )
+        img_resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail='Unable to download captcha image.') from exc
+
+    mime_type = img_resp.headers.get('Content-Type') or 'image/png'
+    image_b64 = base64.b64encode(img_resp.content).decode('ascii')
+    token = store_captcha_session(session)
+    return {
+        'success': False,
+        'requiresCaptcha': True,
+        'message': 'Captcha required for case number search.',
+        'caseNumber': case_number,
+        'captchaToken': token,
+        'captchaImage': f'data:{mime_type};base64,{image_b64}',
+    }
+
+
 def has_invalid_captcha(html: str) -> bool:
     lowered = html.lower()
     if 'captcha' not in lowered:
@@ -1015,6 +1278,7 @@ def post_ecourts_case_details(request: CaseDetailsRequest) -> Dict[str, Any]:
     cnr_number = clean_text(request.cnr_number)
     case_number = clean_text(request.case_number)
 
+    # ── 1. CNR lookup: call eCourts history API directly ──────────────────────
     if cnr_number:
         try:
             response = _ecourts_session().get(
@@ -1048,82 +1312,247 @@ def post_ecourts_case_details(request: CaseDetailsRequest) -> Dict[str, Any]:
     if not case_number:
         raise HTTPException(status_code=400, detail='Either cnr_number or case_number is required.')
 
+    # ── 2. Case number without captcha → return captcha challenge ─────────────
     if not request.captcha:
-        return build_requires_captcha_response(
-            case_number,
-            'CNR number is not available. Captcha is required for case number search.',
-        )
+        return _create_hc_captcha_challenge(case_number)
 
+    # ── 3. Case number + captcha → query case_no_qry, then fetch history ──────
     parsed_case_number = parse_case_number(case_number)
     if not parsed_case_number:
         return {
             'success': False,
-            'message': 'Unable to parse the case number for eCourts lookup.',
+            'message': 'Unable to parse the case number. Expected format: TYPE/NUMBER/YEAR (e.g. WP/4232/2024).',
         }
 
     case_type_text, case_no, case_year = parsed_case_number
     case_type_code = CASE_TYPE_MAPPING.get(case_type_text)
+    print(f'[case-details] original={case_number!r} parsed_type={case_type_text!r} ecourts_code={case_type_code!r} no={case_no} year={case_year}')
     if not case_type_code:
+        print(f'[case-details] CASE_TYPE_MAPPING_NOT_FOUND: original={case_number!r} parsed_type={case_type_text!r}')
         return {
             'success': False,
-            'message': 'Case type mapping not available for this case type.',
+            'error': 'CASE_TYPE_MAPPING_NOT_FOUND',
+            'caseNumber': case_number,
+            'parsedCaseType': case_type_text,
+            'parsedCaseNo': case_no,
+            'parsedYear': case_year,
+            'message': f'Case type "{case_type_text}" is not yet configured for eCourts lookup. Please add it to CASE_TYPE_MAPPING in the backend.',
         }
 
     captcha_token = clean_text(request.captcha_token)
-    if not captcha_token:
-        return build_requires_captcha_response(
-            case_number,
-            'Captcha session is missing. Please enter the new captcha and try again.',
-        )
-
-    captcha_session = pop_captcha_session(captcha_token)
+    captcha_session = pop_captcha_session(captcha_token) if captcha_token else None
     if not captcha_session:
-        return build_requires_captcha_response(
-            case_number,
-            'Captcha session expired. Please enter the new captcha and try again.',
-        )
+        return _create_hc_captcha_challenge(case_number)
 
+    # Step A: POST to case_no_qry.php
     try:
-        response = captcha_session.post(
-            ECOURTS_CASE_NUMBER_URL,
+        qry_resp = captcha_session.post(
+            HC_CASE_NO_QUERY_URL,
             data={
                 'action_code': 'showRecords',
-                'court_code': '1',
                 'state_code': '10',
-                'court_complex_code': '1',
-                'caseStatusSearchType': 'CScaseNumber',
-                'captcha': clean_text(request.captcha),
+                'dist_code': '1',
                 'case_type': case_type_code,
                 'case_no': case_no,
                 'rgyear': case_year,
                 'caseNoType': 'new',
                 'displayOldCaseNo': 'NO',
+                'captcha': clean_text(request.captcha),
+                'court_code': '1',
             },
             headers={
                 'User-Agent': 'Mozilla/5.0',
-                'Origin': ECOURTS_BASE_URL,
-                'Referer': ECOURTS_MAIN_URL,
+                'Origin': HC_BASE_URL,
+                'Referer': HC_BASE_URL + '/',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             },
             timeout=ECOURTS_REQUEST_TIMEOUT,
         )
-        response.raise_for_status()
+        qry_resp.raise_for_status()
     except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail='Unable to fetch case details from eCourts.') from exc
+        raise HTTPException(status_code=502, detail='Unable to query case details from eCourts.') from exc
 
-    if has_invalid_captcha(response.text):
-        return build_requires_captcha_response(
-            case_number,
-            'Invalid captcha. Please try again.',
+    qry_body = qry_resp.text.strip()
+
+    if has_invalid_captcha(qry_body):
+        return _create_hc_captcha_challenge(case_number)
+
+    # Step B: Parse JSON to extract cino, token, case_no
+    try:
+        qry_json = json.loads(qry_body)
+    except (json.JSONDecodeError, ValueError):
+        # Not JSON — treat as HTML response directly
+        return build_case_details_response(
+            search_type='CASE_NUMBER',
+            cnr_number='',
+            case_number=case_number,
+            html=qry_body,
         )
 
+    con = qry_json.get('con', '')
+    if not con or con == 'Invalid Captcha' or qry_json.get('Error'):
+        if has_invalid_captcha(str(con)):
+            return _create_hc_captcha_challenge(case_number)
+        return {'success': False, 'message': 'No records found for this case number.'}
+
+    if isinstance(con, str):
+        try:
+            con = json.loads(con)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    if not isinstance(con, list) or not con:
+        return {'success': False, 'message': 'No records found for this case number.'}
+
+    first_rec = con[0]
+    cino = clean_text(first_rec.get('cino') or '')
+    history_token = clean_text(first_rec.get('token') or '')
+    rec_case_no = clean_text(first_rec.get('case_no') or case_no)
+
+    if not cino:
+        # No cino — fall back to JSON-based response
+        return build_case_details_response(
+            search_type='CASE_NUMBER',
+            cnr_number='',
+            case_number=case_number,
+            html=qry_body,
+        )
+
+    # Step C: Fetch full case history using cino + token
+    try:
+        hist_resp = captcha_session.post(
+            HC_HISTORY_URL,
+            data={
+                'court_code': '1',
+                'state_code': '10',
+                'dist_code': '1',
+                'case_no': rec_case_no,
+                'cino': cino,
+                'token': history_token,
+                'appFlag': '',
+            },
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Origin': HC_BASE_URL,
+                'Referer': HC_BASE_URL + '/',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            },
+            timeout=ECOURTS_REQUEST_TIMEOUT,
+        )
+        hist_resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail='Unable to fetch case history from eCourts.') from exc
+
+    # Step D: Parse and return structured JSON
     return build_case_details_response(
         search_type='CASE_NUMBER',
-        cnr_number='',
+        cnr_number=cino,
         case_number=case_number,
-        html=response.text,
+        html=hist_resp.text,
     )
+
+
+@app.post('/api/lookup-cnr')
+def post_lookup_cnr(request: LookupCnrRequest) -> Dict[str, Any]:
+    """Auto-solve captcha and return the CNR for a given case number.
+
+    Retries up to 3 times when ddddocr misreads the captcha.
+    """
+    case_number = clean_text(request.case_number)
+    if not case_number:
+        raise HTTPException(status_code=400, detail='case_number is required.')
+
+    parsed = parse_case_number(case_number)
+    if not parsed:
+        return {'success': False, 'cnr_number': None, 'message': f'Unable to parse case number: {case_number}'}
+
+    case_type_text, case_no, case_year = parsed
+    case_type_code = CASE_TYPE_MAPPING.get(case_type_text)
+    if not case_type_code:
+        return {
+            'success': False,
+            'cnr_number': None,
+            'message': f'Case type "{case_type_text}" is not configured for eCourts lookup.',
+        }
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        session, captcha_text = _auto_solve_captcha_hc()
+        print(f'[lookup-cnr] attempt={attempt + 1} case={case_number!r} captcha_ocr={captcha_text!r}')
+
+        try:
+            qry_resp = session.post(
+                HC_CASE_NO_QUERY_URL,
+                data={
+                    'action_code': 'showRecords',
+                    'state_code': '10',
+                    'dist_code': '1',
+                    'case_type': case_type_code,
+                    'case_no': case_no,
+                    'rgyear': case_year,
+                    'caseNoType': 'new',
+                    'displayOldCaseNo': 'NO',
+                    'captcha': captcha_text,
+                    'court_code': '1',
+                },
+                headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Origin': HC_BASE_URL,
+                    'Referer': HC_BASE_URL + '/',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                },
+                timeout=ECOURTS_REQUEST_TIMEOUT,
+            )
+            qry_resp.raise_for_status()
+        except requests.RequestException as exc:
+            if attempt == max_retries - 1:
+                raise HTTPException(status_code=502, detail=f'Unable to query eCourts: {exc}') from exc
+            continue
+
+        qry_body = qry_resp.text.strip()
+        print(f'[lookup-cnr] response preview: {qry_body[:120]!r}')
+
+        if has_invalid_captcha(qry_body):
+            print(f'[lookup-cnr] captcha rejected, retrying...')
+            continue
+
+        # JSON path (string code e.g. WP_C): {"con": [{"cino": "HCMA...", ...}]}
+        try:
+            qry_json = json.loads(qry_body)
+        except (json.JSONDecodeError, ValueError):
+            qry_json = None
+
+        if qry_json is not None:
+            con = qry_json.get('con', '')
+            if not con or con == 'Invalid Captcha' or qry_json.get('Error'):
+                continue
+            if isinstance(con, str):
+                try:
+                    con = json.loads(con)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            if isinstance(con, list) and con:
+                cino = clean_text(con[0].get('cino') or '')
+                if cino:
+                    print(f'[lookup-cnr] found CNR={cino!r} via JSON path')
+                    return {'success': True, 'cnr_number': cino, 'case_number': case_number}
+            return {'success': False, 'cnr_number': None, 'message': 'No records found for this case number.'}
+
+        # Tilde-delimited path (numeric code): field0~case_no~parties~CNR~...##
+        first_record = qry_body.split('##')[0]
+        parts = first_record.split('~')
+        if len(parts) >= 4:
+            cino = parts[3].strip()
+            if cino:
+                print(f'[lookup-cnr] found CNR={cino!r} via tilde path')
+                return {'success': True, 'cnr_number': cino, 'case_number': case_number}
+
+        return {'success': False, 'cnr_number': None, 'message': 'Unexpected response format from eCourts.'}
+
+    return {'success': False, 'cnr_number': None, 'message': f'Captcha failed after {max_retries} attempts.'}
 
 
 @app.post('/api/extract-pdf-text')

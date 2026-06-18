@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils';
 import type { Case } from '@/types';
 
 interface DailyCauseListRecord {
-  id: string;
+  id?: string;
   cause_date: string;
   court_name: string | null;
   bench: string | null;
@@ -61,6 +61,7 @@ interface MatchedRecord {
   causeList: DailyCauseListRecord;
   case: Case;
   matchType: MatchType;
+  matchedBy: string;
 }
 
 interface CaseDetailsLink {
@@ -78,6 +79,7 @@ interface CaseDetailsTable {
 interface CaseDetailsResponse {
   success: boolean;
   requiresCaptcha?: boolean;
+  error?: string;
   message?: string;
   caseNumber?: string;
   captchaToken?: string;
@@ -85,6 +87,9 @@ interface CaseDetailsResponse {
   searchType?: 'CNR' | 'CASE_NUMBER';
   cnr_number?: string;
   case_number?: string;
+  parsedCaseType?: string;
+  parsedCaseNo?: string;
+  parsedYear?: string;
   text?: string;
   tables?: CaseDetailsTable[];
   links?: CaseDetailsLink[];
@@ -107,8 +112,6 @@ type SectionKey =
   | 'case-timeline';
 
 const PAGE_SIZE = 20;
-const CL_SELECT =
-  'id, cause_date, court_name, bench, court_hall, item_number, case_number, cnr_number, petitioner, respondent, party_names, judge_name, last_hearing_or_stage, counsel_name';
 
 const SECTION_CONFIG: Array<{ key: SectionKey; title: string; keywords: string[] }> = [
   {
@@ -181,9 +184,14 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? '').trim();
 }
 
-function MatchTypeBadge({ type }: { type: MatchType }) {
-  if (type === 'cnr') return <Badge variant="success">CNR Match</Badge>;
-  return <Badge variant="info">Case Number Match</Badge>;
+function MatchTypeBadge({ type, matchedBy }: { type: MatchType; matchedBy: string }) {
+  const label = type === 'cnr' ? 'CNR Match' : 'Case Number Match';
+  const variant = type === 'cnr' ? 'success' : 'info';
+  return (
+    <span title={`Matched by: ${matchedBy}`}>
+      <Badge variant={variant}>{label}</Badge>
+    </span>
+  );
 }
 
 function SummaryCard({ title, value }: { title: string; value: number | string }) {
@@ -627,6 +635,7 @@ function CaseDetailsModal({
   };
 
   const hasContent = details && ((details.tables?.length ?? 0) > 0 || (details.text ?? '').trim().length > 0);
+  const isMappingMissing = details?.error === 'CASE_TYPE_MAPPING_NOT_FOUND';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -664,6 +673,40 @@ function CaseDetailsModal({
             <p className="text-sm font-medium text-destructive">Unable to fetch case details.</p>
             <p className="text-xs text-muted-foreground">{error}</p>
             <Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>
+          </div>
+        )}
+
+        {/* Case type mapping missing — debug panel */}
+        {!loading && !error && isMappingMissing && (
+          <div className="flex flex-1 flex-col gap-4 overflow-auto p-6">
+            <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-4">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                Case type not yet configured for eCourts lookup
+              </p>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="rounded border bg-background p-3 space-y-1">
+                  <p className="text-muted-foreground uppercase tracking-wide font-semibold text-[10px]">Original Case Number</p>
+                  <p className="font-mono font-bold">{details?.caseNumber ?? '—'}</p>
+                </div>
+                <div className="rounded border bg-background p-3 space-y-1">
+                  <p className="text-muted-foreground uppercase tracking-wide font-semibold text-[10px]">Parsed Case Type</p>
+                  <p className="font-mono font-bold text-destructive">{details?.parsedCaseType ?? '—'}</p>
+                </div>
+                <div className="rounded border bg-background p-3 space-y-1">
+                  <p className="text-muted-foreground uppercase tracking-wide font-semibold text-[10px]">Parsed Case No</p>
+                  <p className="font-mono">{details?.parsedCaseNo ?? '—'}</p>
+                </div>
+                <div className="rounded border bg-background p-3 space-y-1">
+                  <p className="text-muted-foreground uppercase tracking-wide font-semibold text-[10px]">Parsed Year</p>
+                  <p className="font-mono">{details?.parsedYear ?? '—'}</p>
+                </div>
+              </div>
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Add <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded font-mono">{details?.parsedCaseType}</code> to{' '}
+                <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded font-mono">CASE_TYPE_MAPPING</code>{' '}
+                in <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded font-mono">backend/app.py</code> with the correct eCourts numeric code.
+              </p>
+            </div>
           </div>
         )}
 
@@ -777,6 +820,8 @@ export default function TodaysListingsPage() {
   const [causeDate, setCauseDate] = useState<string | null>(null);
   const [totalCauseListCount, setTotalCauseListCount] = useState(0);
   const [matchedRecords, setMatchedRecords] = useState<MatchedRecord[]>([]);
+  // case_number strings currently being resolved via /api/lookup-cnr
+  const [cnrLoadingKeys, setCnrLoadingKeys] = useState<Set<string>>(new Set());
 
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -805,48 +850,34 @@ export default function TodaysListingsPage() {
     setError(null);
 
     try {
-      const today = new Date().toISOString().split('T')[0];
-      let targetDate = today;
+      // Step 1: Get today's cause list from the live Python API (shared cache with Cause List page)
+      const cacheKey = 'cause_list_cache_' + new Date().toISOString().split('T')[0];
+      let causeListRows: DailyCauseListRecord[] = [];
 
-      const { data: todayCheck } = await supabase
-        .from('daily_cause_list')
-        .select('cause_date')
-        .eq('court_name', 'Madras High Court')
-        .eq('bench', 'Chennai')
-        .eq('cause_date', today)
-        .limit(1);
+      const cached = (() => {
+        try {
+          const raw = localStorage.getItem(cacheKey);
+          return raw ? (JSON.parse(raw) as DailyCauseListRecord[]) : null;
+        } catch { return null; }
+      })();
 
-      if (!todayCheck || todayCheck.length === 0) {
-        const { data: latestRow } = await supabase
-          .from('daily_cause_list')
-          .select('cause_date')
-          .eq('court_name', 'Madras High Court')
-          .eq('bench', 'Chennai')
-          .order('cause_date', { ascending: false })
-          .limit(1);
-
-        if (latestRow && latestRow.length > 0) {
-          targetDate = latestRow[0].cause_date as string;
-        } else {
-          setCauseDate(null);
-          setTotalCauseListCount(0);
-          setMatchedRecords([]);
-          setLoading(false);
-          return;
+      if (cached && cached.length > 0) {
+        causeListRows = cached;
+      } else {
+        const resp = await fetch('/api/todays-cause-list');
+        if (!resp.ok) {
+          let detail = `HTTP ${resp.status}`;
+          try { const body = await resp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
+          throw new Error(`Cause list unavailable: ${detail}`);
         }
+        causeListRows = await resp.json();
       }
 
-      setCauseDate(targetDate);
+      const today = new Date().toISOString().split('T')[0];
+      setCauseDate(causeListRows[0]?.cause_date ?? today);
+      setTotalCauseListCount(causeListRows.length);
 
-      const { count: totalCount } = await supabase
-        .from('daily_cause_list')
-        .select('*', { count: 'exact', head: true })
-        .eq('cause_date', targetDate)
-        .eq('court_name', 'Madras High Court')
-        .eq('bench', 'Chennai');
-
-      setTotalCauseListCount(totalCount ?? 0);
-
+      // Step 2: Fetch user's cases from Supabase
       const { data: casesData, error: casesError } = await supabase
         .from('cases')
         .select('*')
@@ -861,80 +892,119 @@ export default function TodaysListingsPage() {
         return;
       }
 
-      const cnrMap = new Map<string, Case>();
-      const caseNumMap = new Map<string, Case>();
-      const cnrOriginal: string[] = [];
-      const caseNumOriginal: string[] = [];
+      // Step 3: Build lookup maps FROM the cause list
+      // Also build a normalized map to handle format differences
+      // e.g. "WP/1234/2026" vs "W.P.No.1234/2026" both normalize to "WP12342026"
+      function normCaseNum(s: string): string {
+        return s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      }
 
-      for (const currentCase of cases) {
-        if (currentCase.cnr_number?.trim()) {
-          const key = currentCase.cnr_number.trim().toLowerCase();
-          if (!cnrMap.has(key)) {
-            cnrMap.set(key, currentCase);
-            cnrOriginal.push(currentCase.cnr_number.trim());
-          }
+      const clByCnr = new Map<string, DailyCauseListRecord>();
+      const clByCaseNum = new Map<string, DailyCauseListRecord>();
+      const clByNormCaseNum = new Map<string, DailyCauseListRecord>();
+
+      for (const row of causeListRows) {
+        if (row.cnr_number?.trim()) {
+          clByCnr.set(row.cnr_number.trim().toLowerCase(), row);
         }
-
-        if (currentCase.case_number?.trim()) {
-          const key = currentCase.case_number.trim().toLowerCase();
-          if (!caseNumMap.has(key)) {
-            caseNumMap.set(key, currentCase);
-            caseNumOriginal.push(currentCase.case_number.trim());
-          }
+        if (row.case_number?.trim()) {
+          clByCaseNum.set(row.case_number.trim().toLowerCase(), row);
+          const norm = normCaseNum(row.case_number);
+          if (norm) clByNormCaseNum.set(norm, row);
         }
       }
 
-      const cnrResultsRaw: DailyCauseListRecord[] = [];
-      if (cnrOriginal.length > 0) {
-        const { data, error: cnrError } = await supabase
-          .from('daily_cause_list')
-          .select(CL_SELECT)
-          .eq('cause_date', targetDate)
-          .eq('court_name', 'Madras High Court')
-          .eq('bench', 'Chennai')
-          .in('cnr_number', cnrOriginal);
-        if (cnrError) throw cnrError;
-        if (data) cnrResultsRaw.push(...(data as DailyCauseListRecord[]));
-      }
-
-      const caseNumResultsRaw: DailyCauseListRecord[] = [];
-      if (caseNumOriginal.length > 0) {
-        const { data, error: caseNumberError } = await supabase
-          .from('daily_cause_list')
-          .select(CL_SELECT)
-          .eq('cause_date', targetDate)
-          .eq('court_name', 'Madras High Court')
-          .eq('bench', 'Chennai')
-          .in('case_number', caseNumOriginal);
-        if (caseNumberError) throw caseNumberError;
-        if (data) caseNumResultsRaw.push(...(data as DailyCauseListRecord[]));
-      }
-
-      const seen = new Set<string>();
+      // Step 4: For each case in the cases table, look it up in today's cause list.
+      // CNR match is tried first (exact), then exact case_number, then normalized case_number.
+      // If matched by case_number and case has a CNR, back-fill it onto the cause list row
+      // so eCourts lookups skip captcha.
+      const seen = new Set<string>(); // dedup by cause list row
       const merged: MatchedRecord[] = [];
 
-      for (const causeListRecord of cnrResultsRaw) {
-        if (seen.has(causeListRecord.id)) continue;
-        const key = causeListRecord.cnr_number?.trim().toLowerCase();
-        const matchedCase = key ? cnrMap.get(key) : undefined;
-        if (!matchedCase) continue;
-        seen.add(causeListRecord.id);
-        merged.push({ causeList: causeListRecord, case: matchedCase, matchType: 'cnr' });
-      }
+      for (const c of cases) {
+        // CNR match
+        const cnrKey = c.cnr_number?.trim().toLowerCase();
+        if (cnrKey && clByCnr.has(cnrKey)) {
+          const row = clByCnr.get(cnrKey)!;
+          const rowKey = `${row.court_hall}|${row.item_number}|${row.case_number}`;
+          if (!seen.has(rowKey)) {
+            seen.add(rowKey);
+            console.log('[Listings match] CNR:', c.cnr_number, '→ CL case:', row.case_number, '| Internal case:', c.case_number);
+            // Cause list XML never includes CNRs — always pull from case table
+            const enrichedRow: DailyCauseListRecord = c.cnr_number?.trim()
+              ? { ...row, cnr_number: c.cnr_number.trim() }
+              : row;
+            merged.push({ causeList: enrichedRow, case: c, matchType: 'cnr', matchedBy: `CNR: ${c.cnr_number}` });
+            continue;
+          }
+        }
 
-      for (const causeListRecord of caseNumResultsRaw) {
-        if (seen.has(causeListRecord.id)) continue;
-        const key = causeListRecord.case_number?.trim().toLowerCase();
-        const matchedCase = key ? caseNumMap.get(key) : undefined;
-        if (!matchedCase) continue;
-        seen.add(causeListRecord.id);
-        merged.push({ causeList: causeListRecord, case: matchedCase, matchType: 'case_number' });
+        // Case number match (exact, then normalized)
+        const caseNum = c.case_number?.trim() ?? '';
+        if (caseNum) {
+          const exactRow = clByCaseNum.get(caseNum.toLowerCase());
+          const normRow = !exactRow ? clByNormCaseNum.get(normCaseNum(caseNum)) : undefined;
+          const row = exactRow ?? normRow;
+          if (row) {
+            const rowKey = `${row.court_hall}|${row.item_number}|${row.case_number}`;
+            if (!seen.has(rowKey)) {
+              seen.add(rowKey);
+              const matchedBy = exactRow
+                ? `Case No (exact): ${caseNum}`
+                : `Case No (normalized): ${caseNum} ≈ ${row.case_number}`;
+              console.log('[Listings match]', matchedBy, '| Internal case:', c.case_number);
+              // Use the cause list row as-is; CNR will be fetched from eCourts API below
+              merged.push({ causeList: row, case: c, matchType: 'case_number', matchedBy });
+            }
+          }
+        }
       }
 
       setMatchedRecords(merged);
+
+      // Step 5: For case_number-matched records without a CNR, auto-resolve via eCourts API
+      const needsCnr = merged.filter(
+        (r) => r.matchType === 'case_number' && !r.causeList.cnr_number?.trim() && r.causeList.case_number?.trim(),
+      );
+      if (needsCnr.length > 0) {
+        const keys = new Set(needsCnr.map((r) => r.causeList.case_number!.trim()));
+        setCnrLoadingKeys(keys);
+
+        needsCnr.forEach(async (r) => {
+          const caseNumber = r.causeList.case_number!.trim();
+          try {
+            const resp = await fetch('/api/lookup-cnr', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ case_number: caseNumber }),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data.success && data.cnr_number) {
+                console.log('[lookup-cnr] resolved', caseNumber, '→', data.cnr_number);
+                setMatchedRecords((prev) =>
+                  prev.map((mr) =>
+                    mr.causeList.case_number?.trim() === caseNumber
+                      ? { ...mr, causeList: { ...mr.causeList, cnr_number: data.cnr_number } }
+                      : mr,
+                  ),
+                );
+              }
+            }
+          } catch (err) {
+            console.warn('[lookup-cnr] failed for', caseNumber, err);
+          } finally {
+            setCnrLoadingKeys((prev) => {
+              const next = new Set(prev);
+              next.delete(caseNumber);
+              return next;
+            });
+          }
+        });
+      }
     } catch (err) {
       console.error('[TodaysListingsPage] fetch error:', err);
-      setError('Failed to load listings. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to load listings. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -1096,6 +1166,12 @@ export default function TodaysListingsPage() {
           setCaptchaMessage(data.message ?? 'Captcha required for case number search.');
           return;
         }
+        if (data?.error === 'CASE_TYPE_MAPPING_NOT_FOUND') {
+          // Show debug panel inside the modal instead of a bare error string
+          setCaseDetails(data);
+          setDetailsLoading(false);
+          return;
+        }
         if (!data?.success) { setDetailsError(data?.message || 'Unable to fetch case details.'); return; }
         setCaseDetails(data);
         // Back-fill discovered CNR into the table row so it shows immediately
@@ -1151,6 +1227,11 @@ export default function TodaysListingsPage() {
         setCaptchaImage(data.captchaImage ?? null);
         setCaptchaToken(data.captchaToken ?? null);
         setCaptchaMessage(data.message ?? 'Invalid captcha. Please try again.');
+        return;
+      }
+
+      if (data?.error === 'CASE_TYPE_MAPPING_NOT_FOUND') {
+        setCaseDetails(data);
         return;
       }
 
@@ -1385,12 +1466,21 @@ export default function TodaysListingsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    paginated.map((record) => (
-                      <TableRow key={record.causeList.id}>
+                    paginated.map((record, idx) => (
+                      <TableRow key={`${record.causeList.court_hall}-${record.causeList.item_number}-${record.causeList.case_number}-${idx}`}>
                         <TableCell className="whitespace-nowrap font-medium">{record.causeList.court_hall ?? '—'}</TableCell>
                         <TableCell className="whitespace-nowrap">{record.causeList.item_number ?? '—'}</TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs">
-                          {record.causeList.cnr_number || record.case.cnr_number || '—'}
+                          {record.causeList.cnr_number?.trim() ? (
+                            record.causeList.cnr_number.trim()
+                          ) : cnrLoadingKeys.has(record.causeList.case_number?.trim() ?? '') ? (
+                            <span className="inline-flex items-center gap-1 text-muted-foreground">
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              <span className="text-xs">looking up…</span>
+                            </span>
+                          ) : (
+                            '—'
+                          )}
                         </TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs">{record.causeList.case_number ?? '—'}</TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs">{record.case.case_number ?? '—'}</TableCell>
@@ -1406,7 +1496,7 @@ export default function TodaysListingsPage() {
                         <TableCell className="whitespace-nowrap">{record.case.client_name ?? '—'}</TableCell>
                         <TableCell className="whitespace-nowrap">{fmtDate(record.case.next_hearing_date)}</TableCell>
                         <TableCell>
-                          <MatchTypeBadge type={record.matchType} />
+                          <MatchTypeBadge type={record.matchType} matchedBy={record.matchedBy} />
                         </TableCell>
                         <TableCell>
                           <Button variant="outline" size="sm" className="h-7 gap-1.5 whitespace-nowrap text-xs" onClick={() => fetchCaseDetails(record)}>
