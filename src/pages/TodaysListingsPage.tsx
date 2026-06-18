@@ -36,6 +36,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Search, X, Eye, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import type { Case } from '@/types';
 
 interface DailyCauseListRecord {
@@ -230,17 +231,38 @@ function DynamicTable({ table }: { table: CaseDetailsTable }) {
     ['pdf link', 'pdf', 'order details', 'view'].some((kw) => h.toLowerCase().includes(kw)),
   );
 
+  const openPdf = async (originalUrl: string) => {
+    const proxyUrl = `/api/proxy-pdf?url=${encodeURIComponent(originalUrl)}`;
+    // Open in a new tab; the browser will show the PDF or a backend error page
+    const win = window.open('', '_blank');
+    if (!win) { toast.error('Pop-up blocked. Allow pop-ups and try again.'); return; }
+    try {
+      const resp = await fetch(proxyUrl);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        win.location.href = blobUrl;
+      } else {
+        win.close();
+        const body = await resp.json().catch(() => ({ detail: 'PDF not available.' }));
+        toast.error(body.detail ?? 'PDF not available for this case.');
+      }
+    } catch {
+      win.close();
+      toast.error('Unable to fetch PDF. Make sure the backend is running.');
+    }
+  };
+
   const renderCell = (value: string, colIdx: number) => {
     if (colIdx === pdfColIdx && value && value.startsWith('http')) {
       return (
-        <a
-          href={value}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-blue-700 hover:underline text-xs"
+        <button
+          type="button"
+          onClick={() => openPdf(value)}
+          className="inline-flex items-center gap-1 text-blue-700 hover:underline text-xs cursor-pointer"
         >
           <ExternalLink className="h-3 w-3" /> View PDF
-        </a>
+        </button>
       );
     }
     return value || '—';

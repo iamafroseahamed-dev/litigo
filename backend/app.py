@@ -46,10 +46,8 @@ HC_BASE_URL = 'https://hcservices.ecourts.gov.in/ecourtindiaHC'
 HC_CAPTCHA_URL = f'{HC_BASE_URL}/securimage/securimage_show.php'
 HC_CASE_NO_QUERY_URL = f'{HC_BASE_URL}/cases/case_no_qry.php'
 HC_HISTORY_URL = f'{HC_BASE_URL}/cases/o_civil_case_history.php'
-# eCourts case type string codes used in the case_no_qry.php API.
-# Keys are canonical normalized forms (from _normalize_case_type).
-# Values are the exact string codes eCourts expects in the `case_type` field.
-# Add new entries here as new case types are encountered.
+# eCourts case type STRING codes for the case_no_qry.php API (used by /api/ecourts/case-details).
+# Returns JSON: {"con": [{cino, case_no, token, ...}]}
 CASE_TYPE_MAPPING: Dict[str, str] = {
     'WP':     'WP_C',    # Writ Petition
     'WA':     'WA',      # Writ Appeal
@@ -75,6 +73,101 @@ CASE_TYPE_MAPPING: Dict[str, str] = {
     'PIL':    'PIL',     # Public Interest Litigation
     'EP':     'EP',      # Election Petition
     'OP':     'OP',      # Original Petition
+}
+
+# eCourts case type NUMERIC codes for the case_no_qry.php API.
+# Sourced from the <select id="case_type"> dropdown on the eCourts HC site.
+# Returns tilde-delimited text: id~case_number~parties~CNR~...##
+# Keys are canonical normalized forms (from _normalize_case_type).
+HC_CASE_TYPE_NUMERIC: Dict[str, str] = {
+    # ── Writ ──────────────────────────────────────────────────────────────
+    'WP':       '49',   # Writ Petition
+    'WA':       '48',   # Writ Appeal
+    'WMP':      '133',  # Writ Misc. Petition
+    'WPMP':     '134',  # W.P. Miscellaneous Petition
+    'WAMP':     '132',  # W.A. Miscellaneous Petition
+    'WVMP':     '135',  # Vacating Order - Misc (Writ)
+    'WPCRL':    '334',  # Writ Petition Criminal
+    'WPMPCRL':  '346',  # Writ Misc. Petition Criminal
+    # ── Criminal ──────────────────────────────────────────────────────────
+    'CRLOP':    '12',   # Criminal Original Petition
+    'CRLA':     '11',   # Criminal Appeal
+    'CRLRC':    '13',   # Criminal Revision Case
+    'CRLMC':    '114',  # Criminal Misc. Petition (CRL MP in eCourts)
+    'CRLMP':    '114',  # alias for CRLMC
+    'CRLREF':   '51',   # Criminal Reference
+    # ── Civil / Appeals ───────────────────────────────────────────────────
+    'AS':       '1',    # First Appeal
+    'SA':       '38',   # Second Appeal
+    'CMA':      '2',    # Civil Misc. Appeal
+    'CMSA':     '5',    # Civil Misc. Second Appeal
+    'LPA':      '24',   # Letters Patent Appeal
+    'CRP':      '15',   # Civil Revision Petition
+    'CRPNPD':   '16',   # Civil Rev. Petn. (NPD)
+    'CRPPD':    '17',   # Civil Rev. Petn. (PD)
+    'CMP':      '113',  # Civil Misc. Petition
+    'OSA':      '120',  # Original Side Appeal
+    'RFA':      '1',    # Regular First Appeal → AS (First Appeal) in eCourts
+    # ── Original / Suits ──────────────────────────────────────────────────
+    'OP':       '119',  # Original Petition
+    'OS':       '19',   # Original Suit (CS – Civil Suits in eCourts)
+    'CS':       '19',   # Civil Suits
+    'OA':       '117',  # Original Application
+    'OMS':      '118',  # Original Matrimonial
+    # ── Tax ───────────────────────────────────────────────────────────────
+    'TC':       '40',   # Tax Cases
+    'TCA':      '41',   # Tax Case Appeal
+    'TCP':      '42',   # Tax Case Petition
+    'TCR':      '43',   # Tax Case Reference
+    'TCMP':     '126',  # Tax CMP
+    # ── Habeas Corpus ─────────────────────────────────────────────────────
+    'HCP':      '22',   # Habeas Corpus Petition
+    'HCMP':     '115',  # Habeas Corpus Misc. Petition
+    # ── Contempt ──────────────────────────────────────────────────────────
+    'CONTP':    '9',    # Contempt Petition
+    'CONTPMD':  '166',  # Contempt Petition (MD)
+    'CONTA':    '7',    # Contempt Appeal
+    'CONTAPP':  '143',  # Contempt Application
+    # ── Company / Insolvency ──────────────────────────────────────────────
+    'CP':       '10',   # Company Petition
+    'COMAPEL':  '6',    # Company Appeal
+    'COMPA':    '142',  # Company Applications
+    'IP':       '23',   # Insolvency Petition
+    'IA':       '116',  # Insolvency Application
+    'IC':       '146',  # Insolvency Cases
+    'IN':       '141',  # Insolvency Notice
+    # ── Election / Execution ──────────────────────────────────────────────
+    'ELP':      '144',  # Election Petition
+    'EP':       '145',  # Execution Petition
+    # ── Review ────────────────────────────────────────────────────────────
+    'REVAPLC':  '32',   # Review Application Civil
+    'REVAPLO':  '122',  # Review Application (OS)
+    'REVAPLW':  '34',   # Review Application (Writ)
+    'REVAPPL':  '35',   # Review Applications
+    'REVPET':   '123',  # Review Petition (O)
+    # ── Misc ──────────────────────────────────────────────────────────────
+    'PIL':      '49',   # Public Interest Litigation → filed as WP in eCourts
+    'MP':       '113',  # Misc. Petition → closest is CMP
+    'RC':       '30',   # Referred Cases
+    'RCP':      '31',   # Referred Case Petition
+    'RCMP':     '121',  # RCP Misc. Petition
+    'RT':       '37',   # Referred Trial
+    'SUBA':     '124',  # Sub Application
+    'SUBAPPL':  '125',  # Sub Applications (OS)
+    'SCMP':     '138',  # Supreme Court Misc. Petition
+    'SCP':      '139',  # Supreme Court Petition
+    'STA':      '39',   # Special Tribunal Appeal
+    'STP':      '140',  # Special Tribunal Petition
+    'VCMP':     '131',  # Vacating Order Misc.
+    'TRAPL':    '148',  # Transfer Application
+    'TRAS':     '128',  # Transfer First Appeal
+    'TRCMA':    '47',   # Transfer Civil Misc. Appeal
+    'TRCMP':    '129',  # Transfer Civil Misc. Petition
+    'TRCS':     '130',  # Transfer Civil Suit
+    'TOS':      '127',  # Testamentary Original Suit
+    'LTS':      '147',  # Leave to Sue
+    'RP':       '165',  # Reference Petition
+    'CROSOBJ':  '136',  # Cross Objection
 }
 CAPTCHA_SESSION_TTL = timedelta(minutes=10)
 
@@ -1469,7 +1562,10 @@ def post_lookup_cnr(request: LookupCnrRequest) -> Dict[str, Any]:
         return {'success': False, 'cnr_number': None, 'message': f'Unable to parse case number: {case_number}'}
 
     case_type_text, case_no, case_year = parsed
-    case_type_code = CASE_TYPE_MAPPING.get(case_type_text)
+
+    # Prefer numeric code (returns tilde-delimited; faster to parse for CNR).
+    # Fall back to string code (returns JSON with cino field).
+    case_type_code = HC_CASE_TYPE_NUMERIC.get(case_type_text) or CASE_TYPE_MAPPING.get(case_type_text)
     if not case_type_code:
         return {
             'success': False,
@@ -1553,6 +1649,65 @@ def post_lookup_cnr(request: LookupCnrRequest) -> Dict[str, Any]:
         return {'success': False, 'cnr_number': None, 'message': 'Unexpected response format from eCourts.'}
 
     return {'success': False, 'cnr_number': None, 'message': f'Captcha failed after {max_retries} attempts.'}
+
+
+from fastapi.responses import StreamingResponse
+import urllib.parse
+
+
+@app.get('/api/proxy-pdf')
+def get_proxy_pdf(url: str) -> Any:
+    """Proxy an eCourts PDF URL.
+
+    Fetches the URL with proper eCourts headers. If the server returns a real
+    PDF, streams it to the browser so it renders inline. If it returns HTML
+    (e.g. "Orders is not uploaded"), raises a 404 with the extracted message.
+    """
+    # Basic safety: only allow eCourts / MHC domains
+    parsed_url = urllib.parse.urlparse(url)
+    allowed_hosts = {'hcservices.ecourts.gov.in', 'mhc.tn.gov.in'}
+    if parsed_url.netloc not in allowed_hosts:
+        raise HTTPException(status_code=400, detail='URL not allowed.')
+
+    try:
+        resp = requests.get(
+            url,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://hcservices.ecourts.gov.in/hcservices/',
+                'Accept': 'application/pdf,*/*',
+            },
+            verify=False,
+            timeout=(10, 60),
+            stream=True,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f'Unable to fetch PDF: {exc}') from exc
+
+    content_type = resp.headers.get('content-type', '')
+
+    # If eCourts returned HTML it means the PDF isn't uploaded yet
+    if 'text/html' in content_type or 'text/plain' in content_type:
+        html_body = resp.content.decode('utf-8', errors='replace').strip()
+        # Strip tags to get the plain error message
+        from bs4 import BeautifulSoup as _BS
+        plain = _BS(html_body, 'html.parser').get_text(' ', strip=True)
+        raise HTTPException(status_code=404, detail=plain or 'PDF not available for this case.')
+
+    # Stream the PDF back
+    def _iter():
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                yield chunk
+
+    filename = urllib.parse.unquote(url.rsplit('filename=', 1)[-1].split('&')[0]) if 'filename=' in url else 'order.pdf'
+    filename_safe = filename.replace('/', '_').replace('\\', '_')
+    return StreamingResponse(
+        _iter(),
+        media_type='application/pdf',
+        headers={'Content-Disposition': f'inline; filename="{filename_safe}.pdf"'},
+    )
 
 
 @app.post('/api/extract-pdf-text')
