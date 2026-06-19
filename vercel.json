@@ -2,12 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/todays-cause-list.py": {
-      "maxDuration": 60
-    },
-    "api/ecourts/case-details.py": {
-      "maxDuration": 60
-    }
+    "api/todays-cause-list.py": { "maxDuration": 60 },
+    "api/ecourts/case-details.py": { "maxDuration": 60 },
+    "api/mhc/case-status.py": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
