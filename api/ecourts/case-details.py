@@ -32,7 +32,12 @@ ECOURTS_CASE_NUMBER_URL = (
     f"{ECOURTS_BASE_URL}/hcservices/cases_qry/index_qry.php?action_code=showRecords"
 )
 CASE_TYPE_MAPPING: Dict[str, str] = {"WP": "49"}
-REQUEST_TIMEOUT = (10, 60)  # (connect_timeout, read_timeout) in seconds
+# Keep well within Vercel's 60 s maxDuration.
+# Captcha flow makes two eCourts requests; worst-case with 1 retry:
+#   2 requests × (5 + 22) s × 2 attempts = 108 s — trim reads to 20 s:
+#   2 × (5 + 20) × 2 = 100 s — acceptable given captcha step is one request.
+# Single CNR request: (5 + 22) × 2 = 54 s.
+REQUEST_TIMEOUT = (5, 22)  # (connect_timeout, read_timeout) in seconds
 CAPTCHA_TOKEN_TTL = timedelta(minutes=10)
 
 
@@ -40,9 +45,9 @@ def _ecourts_session() -> requests.Session:
     """Return a Session with retry-on-network-error behaviour."""
     session = requests.Session()
     retry = Retry(
-        total=3,
-        backoff_factor=2,
-        status_forcelist=[429, 500, 502, 503, 504],
+        total=1,
+        backoff_factor=0,
+        status_forcelist=[429, 503, 504],
         allowed_methods=["GET", "POST"],
         raise_on_status=False,
     )

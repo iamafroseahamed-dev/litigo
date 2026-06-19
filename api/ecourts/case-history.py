@@ -1,12 +1,18 @@
 """Vercel serverless: POST /api/ecourts/case-history
 
 Step 2 of the two-step eCourts lookup.
-Given a CNR number, fetches and returns the full case history from eCourts.
+Given a CNR number (and optionally the eCourts internal case_no), returns the
+full case history.
 
-  Step 1: POST /api/ecourts/lookup-cnr   { case_number } → { cnr_number }
-  Step 2: POST /api/ecourts/case-history { cnr_number  } → full history
+If ecourts_case_no is supplied the request uses the richer POST endpoint:
+  POST o_civil_case_history.php { court_code, state_code, case_no, cino, appFlag }
+Otherwise falls back to the original GET endpoint:
+  GET  o_civil_case_history.php?caseStatusSearchType=CNRNumber&cino=...
 
-Request:  { cnr_number: "MHCMA01234567890" }
+  Step 1: POST /api/ecourts/lookup-cnr   { case_number } → { cnr_number, ecourts_case_no }
+  Step 2: POST /api/ecourts/case-history { cnr_number, ecourts_case_no? } → full history
+
+Request:  { cnr_number: "MHCMA01234567890", ecourts_case_no?: "204900042322024" }
 Response: { success, searchType, cnr_number, case_number, tables,
             links, summary_fields, text }
 """
@@ -27,7 +33,9 @@ ECOURTS_BASE_URL = "https://hcservices.ecourts.gov.in"
 ECOURTS_CNR_URL = (
     f"{ECOURTS_BASE_URL}/hcservices/cases_qry/o_civil_case_history.php"
 )
-REQUEST_TIMEOUT = (10, 50)
+# Keep well within Vercel's 60 s maxDuration: (connect, read) × (1 + total retries)
+# (5 + 22) × 2 = 54 s worst-case, leaving ~6 s headroom.
+REQUEST_TIMEOUT = (5, 22)
 
 
 # ── Session ────────────────────────────────────────────────────────────────────
@@ -35,9 +43,9 @@ REQUEST_TIMEOUT = (10, 50)
 def _session() -> requests.Session:
     s = requests.Session()
     retry = Retry(
-        total=2,
-        backoff_factor=1,
-        status_forcelist=[429, 502, 503, 504],
+        total=1,
+        backoff_factor=0,
+        status_forcelist=[429, 503, 504],
         allowed_methods=["GET", "POST"],
         raise_on_status=False,
     )
@@ -437,28 +445,51 @@ class handler(BaseHTTPRequestHandler):
         except Exception:
             return self._json({"success": False, "message": "Invalid request body."}, 400)
 
-        cnr_number = _clean(data.get("cnr_number") or "").upper()
+        cnr_number     = _clean(data.get("cnr_number") or "").upper()
+        ecourts_case_no = _clean(data.get("ecourts_case_no") or "")
         if not cnr_number:
             return self._json({"success": False, "message": "cnr_number is required."}, 400)
 
         try:
-            resp = _session().get(
-                ECOURTS_CNR_URL,
-                params={
-                    "state_code": "10",
-                    "dist_code": "1",
-                    "court_code": "1",
-                    "caseStatusSearchType": "CNRNumber",
-                    "cino": cnr_number,
-                    "national_court_code": "HCMA01",
-                },
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Referer": ECOURTS_BASE_URL + "/",
-                    "X-Requested-With": "XMLHttpRequest",
-                },
-                timeout=REQUEST_TIMEOUT,
-            )
+            if ecourts_case_no:
+                # Step 7 (spec): POST with both case_no + cino for richer response
+                resp = _session().post(
+                    ECOURTS_CNR_URL,
+                    data={
+                        "court_code":         "1",
+                        "state_code":         "10",
+                        "court_complex_code": "1",
+                        "case_no":            ecourts_case_no,
+                        "cino":               cnr_number,
+                        "appFlag":            "",
+                    },
+                    headers={
+                        "User-Agent":       "Mozilla/5.0",
+                        "Referer":          ECOURTS_BASE_URL + "/",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+                    },
+                    timeout=REQUEST_TIMEOUT,
+                )
+            else:
+                # Fallback: GET with CNR only (no captcha, no case_no required)
+                resp = _session().get(
+                    ECOURTS_CNR_URL,
+                    params={
+                        "state_code":           "10",
+                        "dist_code":            "1",
+                        "court_code":           "1",
+                        "caseStatusSearchType": "CNRNumber",
+                        "cino":                 cnr_number,
+                        "national_court_code":  "HCMA01",
+                    },
+                    headers={
+                        "User-Agent":       "Mozilla/5.0",
+                        "Referer":          ECOURTS_BASE_URL + "/",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    timeout=REQUEST_TIMEOUT,
+                )
             resp.raise_for_status()
         except requests.RequestException as exc:
             return self._json({"success": False, "message": f"eCourts did not respond: {exc}"})

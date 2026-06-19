@@ -10,9 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 const Login          = lazy(() => import('@/pages/Login'));
 const Dashboard      = lazy(() => import('@/pages/Dashboard'));
 const Cases          = lazy(() => import('@/pages/Cases'));
-const TodaysCauseList = lazy(() => import('@/pages/TodaysCauseList'));
 const TodaysListings  = lazy(() => import('@/pages/TodaysListings'));
-const Notifications  = lazy(() => import('@/pages/Notifications'));
 const Settings       = lazy(() => import('@/pages/Settings'));
 
 function PageLoader() {
@@ -41,12 +39,10 @@ export default function App() {
             {/* Protected */}
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
-                <Route path="/dashboard"         element={<Dashboard />} />
-                <Route path="/cases"             element={<Cases />} />
-                <Route path="/todays-cause-list" element={<TodaysCauseList />} />
-                <Route path="/todays-listings"   element={<TodaysListings />} />
-                <Route path="/notifications"     element={<Notifications />} />
-                <Route path="/settings"          element={<Settings />} />
+                <Route path="/dashboard"       element={<Dashboard />} />
+                <Route path="/cases"           element={<Cases />} />
+                <Route path="/todays-listings" element={<TodaysListings />} />
+                <Route path="/settings"        element={<Settings />} />
               </Route>
             </Route>
 
@@ -59,5 +55,3 @@ export default function App() {
     </AuthProvider>
   );
 }
-
-

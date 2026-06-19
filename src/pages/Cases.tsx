@@ -14,11 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Search, Edit2, Eye, Filter, X, PowerOff, RefreshCw, Download, Trash2, Users } from 'lucide-react';
+import { Plus, Search, Edit2, Eye, Filter, X, PowerOff, RefreshCw, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import type { Case, CaseNotificationRecipient } from '@/types';
+import type { Case } from '@/types';
 
 const COURTS = [
   'Supreme Court of India', 'High Court', 'District Court', 'Sessions Court',
@@ -29,7 +28,7 @@ const SENSITIVITIES = ['Sensitive', 'Non-Sensitive'];
 const CASE_STATUSES = ['Active', 'Pending', 'Disposed'];
 const FOLLOW_UP_STATUSES = ['Urgent', 'Update Required', 'No Action'];
 
-type FormData = Omit<Case, 'id' | 'organization_id' | 'created_at' | 'updated_at' | 'source_file' | 'source_sheet' | 'import_batch' | 'case_section' | 'followup_status'>;
+type FormData = Omit<Case, 'id' | 'organization_id' | 'created_at' | 'updated_at' | 'source_file' | 'source_sheet' | 'import_batch' | 'case_section' | 'followup_status' | 'ecourts_case_no' | 'cnr_discovered_at'>;
 
 const EMPTY_FORM: FormData = {
   cnr_number: null, case_number: '', court_name: null, district: null, section: null,
@@ -222,25 +221,6 @@ function CaseForm({ initial, onSave, onCancel, saving }: {
         </Field>
       </div>
 
-      <div className="space-y-3">
-        <SectionHeader title="Advocate Details" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Name"><Input value={form.advocate_name ?? ''} onChange={txt('advocate_name')} /></Field>
-          <Field label="Mobile"><Input value={form.advocate_mobile ?? ''} onChange={txt('advocate_mobile')} placeholder="9XXXXXXXXX" /></Field>
-          <Field label="Email"><Input type="email" value={form.advocate_email ?? ''} onChange={txt('advocate_email')} /></Field>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <SectionHeader title="Client Details" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Name"><Input value={form.client_name ?? ''} onChange={txt('client_name')} /></Field>
-          <Field label="Mobile"><Input value={form.client_mobile ?? ''} onChange={txt('client_mobile')} placeholder="9XXXXXXXXX" /></Field>
-          <Field label="WhatsApp"><Input value={form.client_whatsapp ?? ''} onChange={txt('client_whatsapp')} placeholder="9XXXXXXXXX" /></Field>
-          <Field label="Email"><Input type="email" value={form.client_email ?? ''} onChange={txt('client_email')} /></Field>
-        </div>
-      </div>
-
       <div className="flex items-center gap-3 border-t pt-3">
         <Switch checked={form.active} onCheckedChange={v => setForm(p => ({ ...p, active: v }))} id="active-sw" />
         <Label htmlFor="active-sw">Active Case</Label>
@@ -256,240 +236,6 @@ function CaseForm({ initial, onSave, onCancel, saving }: {
   );
 }
 
-// ── Recipient Manager ─────────────────────────────────────────────────────────
-
-type RecipientFormData = Omit<CaseNotificationRecipient, 'id' | 'organization_id' | 'case_id' | 'created_at' | 'updated_at'>;
-
-const EMPTY_RECIPIENT: RecipientFormData = {
-  recipient_name: '', recipient_role: null, email: null, mobile_number: null,
-  whatsapp_number: null, notify_email: true, notify_sms: false, notify_whatsapp: false, active: true,
-};
-
-function validateIndianMobile(v: string | null) {
-  if (!v) return true;
-  return /^[6-9]\d{9}$/.test(v.replace(/\s/g, ''));
-}
-
-function RecipientManager({ caseId, organizationId }: { caseId: string; organizationId: string }) {
-  const [recipients, setRecipients] = useState<CaseNotificationRecipient[]>([]);
-  const [rLoading, setRLoading] = useState(true);
-  const [rDialog, setRDialog] = useState<'add' | 'edit' | null>(null);
-  const [rSelected, setRSelected] = useState<CaseNotificationRecipient | null>(null);
-  const [rForm, setRForm] = useState<RecipientFormData>(EMPTY_RECIPIENT);
-  const [rSaving, setRSaving] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<CaseNotificationRecipient | null>(null);
-
-  const loadRecipients = useCallback(async () => {
-    setRLoading(true);
-    const { data } = await supabase
-      .from('case_notification_recipients')
-      .select('*')
-      .eq('case_id', caseId)
-      .order('created_at', { ascending: true });
-    setRecipients((data ?? []) as CaseNotificationRecipient[]);
-    setRLoading(false);
-  }, [caseId]);
-
-  useEffect(() => { loadRecipients(); }, [loadRecipients]);
-
-  function openAdd() { setRForm(EMPTY_RECIPIENT); setRSelected(null); setRDialog('add'); }
-  function openEdit(r: CaseNotificationRecipient) {
-    setRForm({ recipient_name: r.recipient_name, recipient_role: r.recipient_role, email: r.email,
-      mobile_number: r.mobile_number, whatsapp_number: r.whatsapp_number, notify_email: r.notify_email,
-      notify_sms: r.notify_sms, notify_whatsapp: r.notify_whatsapp, active: r.active });
-    setRSelected(r); setRDialog('edit');
-  }
-
-  function validateRecipient(f: RecipientFormData): string | null {
-    if (!f.recipient_name.trim()) return 'Name is required.';
-    if (f.active && !f.email && !f.mobile_number && !f.whatsapp_number)
-      return 'At least one contact method (email, mobile, or WhatsApp) is required.';
-    if (f.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) return 'Invalid email address.';
-    if (!validateIndianMobile(f.mobile_number)) return 'Mobile must be a valid 10-digit Indian number.';
-    if (!validateIndianMobile(f.whatsapp_number)) return 'WhatsApp must be a valid 10-digit Indian number.';
-    // Duplicate check
-    const others = rSelected ? recipients.filter(r => r.id !== rSelected.id) : recipients;
-    if (f.email && others.some(r => r.email === f.email)) return 'This email is already added for this case.';
-    if (f.mobile_number && others.some(r => r.mobile_number === f.mobile_number)) return 'This mobile is already added.';
-    if (f.whatsapp_number && others.some(r => r.whatsapp_number === f.whatsapp_number)) return 'This WhatsApp is already added.';
-    return null;
-  }
-
-  async function saveRecipient() {
-    const err = validateRecipient(rForm);
-    if (err) { toast.error(err); return; }
-    setRSaving(true);
-    const now = new Date().toISOString();
-    try {
-      if (rDialog === 'add') {
-        const { error } = await supabase.from('case_notification_recipients').insert({
-          ...rForm, case_id: caseId, organization_id: organizationId, created_at: now, updated_at: now,
-        });
-        if (error) throw error;
-        toast.success('Recipient added.');
-      } else if (rSelected) {
-        const { error } = await supabase.from('case_notification_recipients')
-          .update({ ...rForm, updated_at: now }).eq('id', rSelected.id);
-        if (error) throw error;
-        toast.success('Recipient updated.');
-      }
-      setRDialog(null);
-      await loadRecipients();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save recipient.');
-    } finally { setRSaving(false); }
-  }
-
-  async function deleteRecipient() {
-    if (!deleteTarget) return;
-    const { error } = await supabase.from('case_notification_recipients').delete().eq('id', deleteTarget.id);
-    if (error) { toast.error(error.message); return; }
-    toast.success('Recipient removed.');
-    setDeleteTarget(null);
-    await loadRecipients();
-  }
-
-  const rtxt = (f: keyof RecipientFormData) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setRForm(p => ({ ...p, [f]: e.target.value || null }));
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {rLoading ? 'Loading…' : `${recipients.length} recipient${recipients.length !== 1 ? 's' : ''} configured`}
-        </p>
-        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={openAdd}>
-          <Plus className="h-3.5 w-3.5" /> Add Recipient
-        </Button>
-      </div>
-
-      {!rLoading && recipients.length === 0 && (
-        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-          No notification recipients configured. Add recipients to enable case listing alerts.
-        </div>
-      )}
-
-      {recipients.length > 0 && (
-        <div className="overflow-x-auto rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Mobile</TableHead>
-                <TableHead className="text-center">Channels</TableHead>
-                <TableHead className="text-center">Active</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recipients.map(r => (
-                <TableRow key={r.id} className={!r.active ? 'opacity-50' : undefined}>
-                  <TableCell className="font-medium">{r.recipient_name}</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{r.recipient_role ?? '—'}</TableCell>
-                  <TableCell className="text-xs">{r.email ?? '—'}</TableCell>
-                  <TableCell className="text-xs">{r.mobile_number ?? '—'}</TableCell>
-                  <TableCell className="text-center">
-                    <div className="flex justify-center gap-1">
-                      {r.notify_email && <Badge variant="outline" className="text-[10px] px-1">Email</Badge>}
-                      {r.notify_sms && <Badge variant="outline" className="text-[10px] px-1">SMS</Badge>}
-                      {r.notify_whatsapp && <Badge variant="outline" className="text-[10px] px-1">WA</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {r.active ? <Badge variant="success">Yes</Badge> : <Badge variant="secondary">No</Badge>}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 justify-end">
-                      <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(r)}>
-                        <Edit2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteTarget(r)}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-
-      {/* Add / Edit Dialog */}
-      <Dialog open={!!rDialog} onOpenChange={(v) => !v && setRDialog(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{rDialog === 'add' ? 'Add Recipient' : 'Edit Recipient'}</DialogTitle>
-            <DialogDescription>Configure who receives notifications for this case.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Name <span className="text-red-500">*</span></Label>
-                <Input value={rForm.recipient_name} onChange={e => setRForm(p => ({ ...p, recipient_name: e.target.value }))} placeholder="Full name" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Role / Designation</Label>
-                <Input value={rForm.recipient_role ?? ''} onChange={rtxt('recipient_role')} placeholder="e.g. Legal Head" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input type="email" value={rForm.email ?? ''} onChange={rtxt('email')} placeholder="email@example.com" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Mobile</Label>
-                <Input value={rForm.mobile_number ?? ''} onChange={rtxt('mobile_number')} placeholder="9XXXXXXXXX" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>WhatsApp</Label>
-                <Input value={rForm.whatsapp_number ?? ''} onChange={rtxt('whatsapp_number')} placeholder="9XXXXXXXXX" />
-              </div>
-            </div>
-            <div className="space-y-2 rounded-md border p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notification Channels</p>
-              {[
-                { key: 'notify_email' as const, label: 'Email' },
-                { key: 'notify_sms' as const, label: 'SMS' },
-                { key: 'notify_whatsapp' as const, label: 'WhatsApp' },
-              ].map(({ key, label }) => (
-                <div key={key} className="flex items-center justify-between">
-                  <Label className="cursor-pointer">{label}</Label>
-                  <Switch checked={rForm[key]} onCheckedChange={v => setRForm(p => ({ ...p, [key]: v }))} />
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <Label className="cursor-pointer">Active</Label>
-              <Switch checked={rForm.active} onCheckedChange={v => setRForm(p => ({ ...p, active: v }))} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRDialog(null)}>Cancel</Button>
-            <Button onClick={saveRecipient} disabled={rSaving}>{rSaving ? 'Saving…' : 'Save'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirm */}
-      <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Remove Recipient</DialogTitle>
-            <DialogDescription>Remove <strong>{deleteTarget?.recipient_name}</strong> from notifications?</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={deleteRecipient}>Remove</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
 
 export default function CasesPage() {
   const [cases, setCases] = useState<Case[]>([]);
@@ -796,36 +542,12 @@ export default function CasesPage() {
             <DialogTitle>{dialogMode === 'add' ? 'Add New Case' : `Edit — ${selected?.case_number}`}</DialogTitle>
             <DialogDescription>{dialogMode === 'add' ? 'Complete the case profile below.' : 'Update the case record.'}</DialogDescription>
           </DialogHeader>
-          {dialogMode === 'edit' && selected ? (
-            <Tabs defaultValue="details" className="flex flex-col flex-1 min-h-0">
-              <TabsList className="shrink-0 w-full">
-                <TabsTrigger value="details" className="flex-1 gap-1.5">
-                  <Edit2 className="h-3.5 w-3.5" /> Case Profile
-                </TabsTrigger>
-                <TabsTrigger value="recipients" className="flex-1 gap-1.5">
-                  <Users className="h-3.5 w-3.5" /> Notification Recipients
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="details" className="flex-1 min-h-0 mt-0">
-                <CaseForm
-                  initial={{ ...selected } as FormData}
-                  onSave={handleSave}
-                  onCancel={() => setDialogMode(null)}
-                  saving={saving}
-                />
-              </TabsContent>
-              <TabsContent value="recipients" className="flex-1 overflow-y-auto mt-0 px-1 py-3">
-                <RecipientManager caseId={selected.id} organizationId={selected.organization_id} />
-              </TabsContent>
-            </Tabs>
-          ) : (
-            <CaseForm
-              initial={EMPTY_FORM}
-              onSave={handleSave}
-              onCancel={() => setDialogMode(null)}
-              saving={saving}
-            />
-          )}
+          <CaseForm
+            initial={dialogMode === 'edit' && selected ? { ...selected } as FormData : EMPTY_FORM}
+            onSave={handleSave}
+            onCancel={() => setDialogMode(null)}
+            saving={saving}
+          />
         </DialogContent>
       </Dialog>
 
@@ -875,17 +597,6 @@ export default function CasesPage() {
                   </div>
                   <DetailRow label="Last Hearing Update" value={selected.last_hearing_update} />
                 </div>
-                {(selected.advocate_name || selected.client_name) && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b pb-1 mb-3">Contacts</p>
-                    <div className="grid grid-cols-2 gap-4">
-                      <DetailRow label="Advocate" value={selected.advocate_name} />
-                      <DetailRow label="Advocate Mobile" value={selected.advocate_mobile} />
-                      <DetailRow label="Client" value={selected.client_name} />
-                      <DetailRow label="Client Mobile" value={selected.client_mobile} />
-                    </div>
-                  </div>
-                )}
               </div>
               <DialogFooter className="mt-6">
                 <Button variant="outline" onClick={() => setDialogMode(null)}>Close</Button>

@@ -7,7 +7,8 @@ Returns a captcha challenge first if required; once solved returns the CNR.
 Request:  { case_number, captcha?, captcha_token? }
 Response (captcha needed): { success: false, requiresCaptcha: true,
                              captchaImage, captchaToken, message, caseNumber }
-Response (success):        { success: true, cnr_number, case_number }
+Response (success):        { success: true, cnr_number, ecourts_case_no,
+                             case_number }
 """
 from __future__ import annotations
 
@@ -32,16 +33,17 @@ ECOURTS_CASE_URL = (
 # Fallback map used only when the eCourts form does not expose the dropdown.
 # Runtime codes are scraped from the <select> element on first request.
 _CASE_TYPE_FALLBACK: Dict[str, str] = {"WP": "49"}
-REQUEST_TIMEOUT = (10, 50)
+# Keep well within Vercel's 60 s maxDuration: (5 + 22) × 2 attempts = 54 s.
+REQUEST_TIMEOUT = (5, 22)
 CAPTCHA_TOKEN_TTL = timedelta(minutes=10)
 
 
 def _session() -> requests.Session:
     s = requests.Session()
     retry = Retry(
-        total=2,
-        backoff_factor=1,
-        status_forcelist=[429, 502, 503, 504],
+        total=1,
+        backoff_factor=0,
+        status_forcelist=[429, 503, 504],
         allowed_methods=["GET", "POST"],
         raise_on_status=False,
     )
@@ -66,16 +68,33 @@ def _parse_case_number(s: str) -> Optional[Tuple[str, str, str]]:
 
 
 def _captcha_challenge() -> Dict[str, Any]:
+    """
+    Three-step captcha setup following the eCourts discovery flow:
+      1. GET root URL — captures HCSERVICES_SESSID / JSESSION cookies.
+      2. GET main.php  — scrapes the case-type <select> dropdown.
+      3. GET securimage_show.php?{random} — fetches the captcha image.
+    """
     session = _session()
+
+    # Step 1: establish session cookies (HCSERVICES_SESSID, JSESSION)
+    try:
+        session.get(
+            ECOURTS_ROOT_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=REQUEST_TIMEOUT,
+        )
+    except Exception:
+        pass  # non-fatal — cookies may still arrive from main.php
+
+    # Step 2: load main.php to scrape the case-type dropdown
     r = session.get(
         ECOURTS_MAIN_URL,
-        headers={"User-Agent": "Mozilla/5.0", "Referer": ECOURTS_BASE_URL + "/"},
+        headers={"User-Agent": "Mozilla/5.0", "Referer": ECOURTS_ROOT_URL},
         timeout=REQUEST_TIMEOUT,
     )
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Scrape the case-type <select> dynamically so all case types work.
     casetype_map: Dict[str, str] = {}
     ct_select = soup.find("select", attrs={"name": "case_type"})
     if ct_select:
@@ -84,17 +103,14 @@ def _captcha_challenge() -> Dict[str, Any]:
             if not val or val == "0":
                 continue
             text = opt.get_text(strip=True)
-            # Text is e.g. "WA - Writ Appeal" or "WP(MD)" — extract the abbreviation
             abbr = text.split("-")[0].split("(")[0].strip().upper()
             if abbr:
                 casetype_map[abbr] = val
 
-    img_tag = soup.find("img", id="captcha_image")
-    if not img_tag or not img_tag.get("src"):
-        raise ValueError("Cannot find captcha image on eCourts page.")
-    img_url = urljoin(r.url, str(img_tag["src"]))
+    # Step 3: fetch captcha image with a random cache-buster parameter
+    rand_val = random.random()
     img_r = session.get(
-        img_url,
+        f"{ECOURTS_CAPTCHA_URL}?{rand_val}",
         headers={
             "User-Agent": "Mozilla/5.0",
             "Referer": ECOURTS_MAIN_URL,
@@ -104,6 +120,7 @@ def _captcha_challenge() -> Dict[str, Any]:
     )
     img_r.raise_for_status()
     mime = img_r.headers.get("Content-Type") or "image/png"
+
     cookies_list = [
         {"name": c.name, "value": c.value, "domain": c.domain or "", "path": c.path or "/"}
         for c in session.cookies
@@ -147,7 +164,8 @@ def _session_from_token(token: str) -> Tuple[requests.Session, Dict[str, str]]:
     return session, data.get("casetype_map", {})
 
 
-def _extract_cnr(body: str) -> Optional[str]:
+def _extract_cnr_and_case_no(body: str) -> Optional[Dict[str, str]]:
+    """Parse eCourts JSON response and return {cnr_number, ecourts_case_no} or None."""
     try:
         root = json.loads(body)
     except Exception:
@@ -164,8 +182,10 @@ def _extract_cnr(body: str) -> Optional[str]:
             return None
     if not isinstance(con, list) or not con:
         return None
-    cnr = _clean(con[0].get("cino") or con[0].get("cnr_number") or "")
-    return cnr or None
+    first = con[0]
+    cnr      = _clean(first.get("cino") or first.get("cnr_number") or "")
+    case_no  = _clean(first.get("case_no") or "")
+    return {"cnr_number": cnr, "ecourts_case_no": case_no} if cnr else None
 
 
 def _is_bad_captcha(html: str) -> bool:
@@ -300,8 +320,8 @@ class handler(BaseHTTPRequestHandler):
         if _is_bad_captcha(resp.text):
             return _load_captcha("Invalid captcha. Please try again.")
 
-        cnr = _extract_cnr(resp.text)
-        if not cnr:
+        discovered = _extract_cnr_and_case_no(resp.text)
+        if not discovered or not discovered.get("cnr_number"):
             return self._json({
                 "success": False,
                 "message": (
@@ -310,7 +330,12 @@ class handler(BaseHTTPRequestHandler):
                 ),
             })
 
-        self._json({"success": True, "cnr_number": cnr, "case_number": case_number})
+        self._json({
+            "success":        True,
+            "cnr_number":     discovered["cnr_number"],
+            "ecourts_case_no": discovered.get("ecourts_case_no") or "",
+            "case_number":    case_number,
+        })
 
     def _json(self, data: Dict[str, Any], status: int = 200) -> None:
         payload = json.dumps(data).encode()

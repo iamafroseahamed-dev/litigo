@@ -58,6 +58,9 @@ export interface Case {
   import_batch: string | null;
   case_section: string | null;
   followup_status: string | null;
+  // eCourts discovery (set after first captcha lookup — requires migration 005)
+  ecourts_case_no?: string | null;
+  cnr_discovered_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -166,6 +169,62 @@ export type CauseListNotifStatus =
   | 'partial'
   | 'failed'
   | 'no_recipients';
+
+// ── Today's Matched Listings ──────────────────────────────────────────────────
+// Populated by POST /api/match-todays-listings; read-only from the frontend.
+
+export interface HearingEntry {
+  date: string;
+  business: string;
+  stage: string;
+  remarks: string;
+}
+
+export interface TodayMatchedListing {
+  id: string;
+  // listed_date = actual court cause-list date (migration 006+)
+  listed_date: string;
+  // match_date kept for backward compat (= listed_date)
+  match_date: string;
+  cause_list_import_date: string | null;
+  match_created_at: string | null;
+  organization_id: string | null;
+  case_id: string;
+  daily_cause_list_id: string;
+  case_number: string | null;
+  cnr_number: string | null;
+  court_hall: string | null;
+  item_number: string | null;
+  judge_name: string | null;
+  stage: string | null;
+  petitioner: string | null;
+  respondent: string | null;
+  match_type: string;
+  match_status: string;
+  notification_status: string;
+  // eCourts enrichment fields (populated lazily, not during matching)
+  latest_case_status: string | null;
+  latest_stage: string | null;
+  latest_hearing_date: string | null;
+  latest_hearing_remarks: string | null;
+  latest_business: string | null;
+  next_hearing_date: string | null;
+  last_order_date: string | null;
+  last_order_number: string | null;
+  last_order_type: string | null;
+  hearing_history: HearingEntry[] | null;
+  ecourts_last_synced: string | null;
+  ecourts_sync_status: string | null;
+  // CNR discovery tracking (migration 007)
+  ecourts_case_no: string | null;
+  cnr_status: string | null;      // 'discovered' | 'not_discovered' | 'failed'
+  ecourts_error: string | null;
+  ecourts_synced_at: string | null;  // actual column name in DB
+  created_at: string;
+  updated_at: string;
+  // Joined via Supabase select('*, case:cases(*)')
+  case?: Case;
+}
 
 export interface NotificationProvider {
   id: string;

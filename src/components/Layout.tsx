@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Briefcase, BookOpen, List, Bell,
+  LayoutDashboard, Briefcase, List,
   Settings, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -15,21 +15,17 @@ import { Button } from '@/components/ui/button';
 // ── Nav items ─────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
-  { to: '/dashboard',          label: 'Dashboard',           icon: LayoutDashboard },
-  { to: '/cases',              label: 'Cases',               icon: Briefcase },
-  { to: '/todays-cause-list',  label: "Today's Cause List",  icon: BookOpen },
-  { to: '/todays-listings',    label: "Today's Listings",    icon: List },
-  { to: '/notifications',      label: 'Notifications',       icon: Bell },
-  { to: '/settings',           label: 'Settings',            icon: Settings },
+  { to: '/dashboard',       label: 'Dashboard',         icon: LayoutDashboard },
+  { to: '/cases',           label: 'Cases',             icon: Briefcase },
+  { to: '/todays-listings', label: 'Listings History',  icon: List },
+  { to: '/settings',        label: 'Settings',          icon: Settings },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
-  '/dashboard':         'Dashboard',
-  '/cases':             'Case Management',
-  '/todays-cause-list': "Today's Cause List",
-  '/todays-listings':   "Today's Listings",
-  '/notifications':     'Notifications',
-  '/settings':          'Settings',
+  '/dashboard':       'Dashboard',
+  '/cases':           'Case Management',
+  '/todays-listings': 'Listings History',
+  '/settings':        'Settings',
 };
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
