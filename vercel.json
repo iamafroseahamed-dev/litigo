@@ -4,6 +4,8 @@
   "functions": {
     "api/todays-cause-list.py": { "maxDuration": 60 },
     "api/ecourts/case-details.py": { "maxDuration": 60 },
+    "api/ecourts/lookup-cnr.py": { "maxDuration": 60 },
+    "api/ecourts/case-history.py": { "maxDuration": 60 },
     "api/mhc/case-status.py": { "maxDuration": 30 }
   },
   "rewrites": [

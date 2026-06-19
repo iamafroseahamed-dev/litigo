@@ -1128,6 +1128,7 @@ export default function TodaysListingsPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaMessage, setCaptchaMessage] = useState<string | null>(null);
   const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
+  const [pendingCaseNumber, setPendingCaseNumber] = useState<string>('');
 
   const [search, setSearch] = useState('');
   const [filterCourtHall, setFilterCourtHall] = useState('');
@@ -1453,131 +1454,30 @@ export default function TodaysListingsPage() {
   }
 
   // ── eCourts case history ─────────────────────────────────────────────────
-  const loadEcourtsHistory = useCallback(async (record: MatchedRecord, captcha?: string, captchaTokenOverride?: string) => {
-    if (!record) return;
-    setDetailsError(null);
-    setCaseDetails(null);
-    setCaseDetailsResults([]);
-
-    const cnrs = extractCnrNumbers(record).filter(Boolean);
-    const caseNum = normalizeText(record.causeList.case_number) || normalizeText(record.case.case_number);
-
-    // No CNR available — use case number (requires captcha)
-    if (cnrs.length === 0 && !captcha) {
-      if (!caseNum) {
-        setDetailsError('No CNR or case number available.');
-        return;
-      }
-      setDetailsLoading(true);
-      setLoadingMessage('Connecting to eCourts…');
-      try {
-        const res = await fetch('/api/ecourts/case-details', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ case_number: caseNum }),
-        });
-        let data: CaseDetailsResponse | null = null;
-        try { data = (await res.json()) as CaseDetailsResponse; } catch { data = null; }
-        if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
-        if (data?.requiresCaptcha) {
-          setDetailsDialogOpen(false);
-          setCaptchaDialogOpen(true);
-          setCaptchaValue('');
-          setCaptchaImage(data.captchaImage ?? null);
-          setCaptchaToken(data.captchaToken ?? null);
-          setCaptchaMessage(data.message ?? 'Enter the captcha to continue.');
-          return;
-        }
-        if (!data?.success) { setDetailsError(data?.message || 'eCourts lookup failed.'); return; }
-        setCaseDetails(data);
-        setCaseDetailsResults([data]);
-      } catch (err) {
-        setDetailsError(err instanceof Error ? err.message : 'eCourts lookup failed.');
-      } finally { setDetailsLoading(false); }
-      return;
-    }
-
-    // Captcha submit
-    if (captcha && cnrs.length === 0) {
-      setDetailsLoading(true);
-      setLoadingMessage('Submitting captcha…');
-      try {
-        const res = await fetch('/api/ecourts/case-details', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ case_number: caseNum, captcha: captcha.trim(), captcha_token: captchaTokenOverride ?? '' }),
-        });
-        let data: CaseDetailsResponse | null = null;
-        try { data = (await res.json()) as CaseDetailsResponse; } catch { data = null; }
-        if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
-        if (data?.requiresCaptcha) {
-          setDetailsDialogOpen(false);
-          setCaptchaDialogOpen(true);
-          setCaptchaValue('');
-          setCaptchaImage(data.captchaImage ?? null);
-          setCaptchaToken(data.captchaToken ?? null);
-          setCaptchaMessage(data.message ?? 'Invalid captcha. Please try again.');
-          return;
-        }
-        if (!data?.success) { setDetailsError(data?.message || 'eCourts lookup failed.'); return; }
-        setCaseDetails(data);
-        setCaseDetailsResults([data]);
-      } catch (err) {
-        setDetailsError(err instanceof Error ? err.message : 'eCourts lookup failed.');
-      } finally { setDetailsLoading(false); }
-      return;
-    }
-
-    // CNRs available — fetch each from eCourts
-    setDetailsLoading(true);
-    const results: CaseDetailsResponse[] = [];
-    const errors: string[] = [];
+  // Step 2: given a known CNR, fetch the full case history
+  const fetchHistoryByCnr = useCallback(async (cnr: string) => {
+    setLoadingMessage(`Fetching case history from eCourts…`);
+    const cacheKey = `case_history_${cnr}`;
     try {
-      for (let i = 0; i < cnrs.length; i++) {
-        const cnr = cnrs[i];
-        const cacheKey = `case_history_${cnr}`;
-        try {
-          const cached = sessionStorage.getItem(cacheKey);
-          if (cached) {
-            const p = JSON.parse(cached) as CaseDetailsResponse;
-            if (p.success) { results.push(p); continue; }
-          }
-        } catch { /* ignore */ }
-
-        setLoadingMessage(`Fetching history ${i + 1}/${cnrs.length}… (${cnr})`);
-        try {
-          const res = await fetch('/api/ecourts/case-details', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cnr_number: cnr }),
-          });
-          let data: CaseDetailsResponse | null = null;
-          try { data = (await res.json()) as CaseDetailsResponse; } catch { /* ignore */ }
-          if (!res.ok) { errors.push(`${cnr}: HTTP ${res.status}`); continue; }
-          if (data?.requiresCaptcha) {
-            setDetailsDialogOpen(false);
-            setCaptchaDialogOpen(true);
-            setCaptchaValue('');
-            setCaptchaImage(data.captchaImage ?? null);
-            setCaptchaToken(data.captchaToken ?? null);
-            setCaptchaMessage(data.message ?? 'Captcha required.');
-            return;
-          }
-          if (!data?.success) { errors.push(`${cnr}: ${data?.message ?? 'failed'}`); continue; }
-          try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
-          results.push(data);
-        } catch (e) {
-          errors.push(`${cnr}: ${e instanceof Error ? e.message : 'error'}`);
-        }
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        const p = JSON.parse(cached) as CaseDetailsResponse;
+        if (p.success) { setCaseDetails(p); setCaseDetailsResults([p]); setDetailsLoading(false); return; }
       }
-      if (results.length === 0) {
-        setDetailsError(errors.length > 0
-          ? `eCourts failed:\n${errors.join('\n')}`
-          : 'No data returned from eCourts.');
-      } else {
-        setCaseDetails(results[0]);
-        setCaseDetailsResults(results);
-      }
+    } catch { /* ignore */ }
+    try {
+      const res = await fetch('/api/ecourts/case-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cnr_number: cnr }),
+      });
+      let data: CaseDetailsResponse | null = null;
+      try { data = await res.json(); } catch { /* ignore */ }
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      if (!data?.success) { setDetailsError(data?.message || 'eCourts lookup failed.'); return; }
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
+      setCaseDetails(data);
+      setCaseDetailsResults([data]);
     } catch (err) {
       setDetailsError(err instanceof Error ? err.message : 'eCourts lookup failed.');
     } finally {
@@ -1585,24 +1485,88 @@ export default function TodaysListingsPage() {
     }
   }, []);
 
+  // Step 1: resolve CNR from case number (captcha-aware), then fetch history
+  const lookupCnrThenHistory = useCallback(async (
+    caseNumber: string,
+    captcha: string,
+    captchaToken: string,
+  ) => {
+    setDetailsLoading(true);
+    setDetailsError(null);
+    setLoadingMessage(captcha ? 'Submitting captcha…' : 'Resolving CNR from case number…');
+    try {
+      const payload: Record<string, string> = { case_number: caseNumber };
+      if (captcha) payload.captcha = captcha;
+      if (captchaToken) payload.captcha_token = captchaToken;
+      const res = await fetch('/api/ecourts/lookup-cnr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      let data: CaseDetailsResponse | null = null;
+      try { data = await res.json(); } catch { /* ignore */ }
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      if (data?.requiresCaptcha) {
+        setDetailsDialogOpen(false);
+        setCaptchaDialogOpen(true);
+        setCaptchaValue('');
+        setCaptchaImage(data.captchaImage ?? null);
+        setCaptchaToken(data.captchaToken ?? null);
+        setCaptchaMessage(data.message ?? 'Enter captcha to continue.');
+        setDetailsLoading(false);
+        return;
+      }
+      if (!data?.success || !data.cnr_number) {
+        setDetailsError(data?.message || 'Failed to resolve CNR. Please verify the case number.');
+        setDetailsLoading(false);
+        return;
+      }
+      // CNR resolved — fetch the full case history
+      await fetchHistoryByCnr(data.cnr_number);
+    } catch (err) {
+      setDetailsError(err instanceof Error ? err.message : 'Failed to resolve CNR.');
+      setDetailsLoading(false);
+    }
+  }, [fetchHistoryByCnr]);
+
   // ── Details button ────────────────────────────────────────────────────────
   const fetchCaseDetails = useCallback(async (record: MatchedRecord) => {
     setSelectedRecord(record);
     setDetailsDialogOpen(true);
-    await loadEcourtsHistory(record);
-  }, [loadEcourtsHistory]);
+    setDetailsLoading(true);
+    setDetailsError(null);
+    setCaseDetails(null);
+    setCaseDetailsResults([]);
+
+    // Use the CNR stored in the user's tracked case record (most reliable)
+    const storedCnr = normalizeText(record.case.cnr_number);
+    if (storedCnr) {
+      await fetchHistoryByCnr(storedCnr);
+      return;
+    }
+
+    // No stored CNR — auto-resolve from cause list case number
+    const caseNum = (
+      normalizeText(record.causeList.case_number) ||
+      normalizeText(record.case.case_number)
+    ).toUpperCase();
+    if (!caseNum) {
+      setDetailsError('No CNR or case number available for this record.');
+      setDetailsLoading(false);
+      return;
+    }
+    setPendingCaseNumber(caseNum);
+    await lookupCnrThenHistory(caseNum, '', '');
+  }, [fetchHistoryByCnr, lookupCnrThenHistory]);
 
   const refreshCaptcha = useCallback(async () => {
-    if (!selectedRecord) return;
+    if (!pendingCaseNumber) return;
     setCaptchaSubmitting(true);
     try {
-      const caseNum =
-        normalizeText(selectedRecord.causeList.case_number) ||
-        normalizeText(selectedRecord.case.case_number);
-      const res = await fetch('/api/ecourts/case-details', {
+      const res = await fetch('/api/ecourts/lookup-cnr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ case_number: caseNum }),
+        body: JSON.stringify({ case_number: pendingCaseNumber }),
       });
       const data = (await res.json()) as CaseDetailsResponse;
       setCaptchaImage(data.captchaImage ?? null);
@@ -1614,13 +1578,14 @@ export default function TodaysListingsPage() {
     } finally {
       setCaptchaSubmitting(false);
     }
-  }, [selectedRecord]);
+  }, [pendingCaseNumber]);
 
   async function submitCaptcha() {
-    if (!selectedRecord || !captchaValue.trim()) return;
+    if (!pendingCaseNumber || !captchaValue.trim()) return;
     setCaptchaSubmitting(true);
     setCaptchaDialogOpen(false);
-    await loadEcourtsHistory(selectedRecord, captchaValue.trim(), captchaToken ?? undefined);
+    setDetailsDialogOpen(true);
+    await lookupCnrThenHistory(pendingCaseNumber, captchaValue.trim(), captchaToken ?? '');
     setCaptchaSubmitting(false);
   }
 
