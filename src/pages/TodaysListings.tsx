@@ -1228,7 +1228,7 @@ export default function TodaysListingsPage() {
   const [selectedRecord, setSelectedRecord] = useState<MatchedRecord | null>(null);
   const [caseDetails, setCaseDetails] = useState<CaseDetailsResponse | null>(null);
   const [caseDetailsResults, setCaseDetailsResults] = useState<CaseDetailsResponse[]>([]);
-  const [mhcResult, setMhcResult] = useState<MhcStatusResult | null>(null);
+  const [mhcResult] = useState<null>(null);
   const [mhcLoading] = useState(false);
 
   const [captchaDialogOpen, setCaptchaDialogOpen] = useState(false);
@@ -1561,17 +1561,9 @@ export default function TodaysListingsPage() {
     return <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
-  // ── "Details" button → straight to eCourts case history ─────────────────
-  const fetchCaseDetails = useCallback(async (record: MatchedRecord) => {
-    setSelectedRecord(record);
-    setDetailsDialogOpen(true);
-    await loadEcourtsHistory(record);
-  }, [loadEcourtsHistory]);
-
-  // ── "Load Case History" button → eCourts with CNR (slow, needs captcha) ─
+  // ── eCourts case history ─────────────────────────────────────────────────
   const loadEcourtsHistory = useCallback(async (record: MatchedRecord, captcha?: string, captchaTokenOverride?: string) => {
     if (!record) return;
-    setMhcResult(null);
     setDetailsError(null);
     setCaseDetails(null);
     setCaseDetailsResults([]);
@@ -1701,6 +1693,13 @@ export default function TodaysListingsPage() {
       setDetailsLoading(false);
     }
   }, []);
+
+  // ── Details button ────────────────────────────────────────────────────────
+  const fetchCaseDetails = useCallback(async (record: MatchedRecord) => {
+    setSelectedRecord(record);
+    setDetailsDialogOpen(true);
+    await loadEcourtsHistory(record);
+  }, [loadEcourtsHistory]);
 
   const refreshCaptcha = useCallback(async () => {
     if (!selectedRecord) return;
