@@ -873,37 +873,34 @@ export default function TodaysListingsPage() {
     setError(null);
 
     try {
-      // Step 1: Get today's cause list — Supabase fast path unless forced
+      // Step 1+2: Fetch cause list AND user cases in parallel
       const url = forceRefresh
         ? `/api/todays-cause-list?refresh=1&t=${Date.now()}`
         : `/api/todays-cause-list?t=${Date.now()}`;
-      console.log(forceRefresh ? 'Force-refreshing cause list from MHC...' : 'Loading cause list...');
-      const resp = await fetch(url, {
-        cache: 'no-store',
-        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
-      });
-      if (!resp.ok) {
-        let detail = `HTTP ${resp.status}`;
-        try { const body = await resp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
+
+      const [causeListResp, casesResult] = await Promise.all([
+        fetch(url, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+        }),
+        supabase.from('cases').select('*').order('created_at', { ascending: false }),
+      ]);
+
+      if (!causeListResp.ok) {
+        let detail = `HTTP ${causeListResp.status}`;
+        try { const body = await causeListResp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
         throw new Error(`Cause list unavailable: ${detail}`);
       }
-      const causeListRows: DailyCauseListRecord[] = await resp.json();
-      console.log('Records returned:', causeListRows.length);
-      console.log('First record:', causeListRows[0]);
+      const causeListRows: DailyCauseListRecord[] = await causeListResp.json();
+
+      if (casesResult.error) throw casesResult.error;
 
       const today = new Date().toISOString().split('T')[0];
       setCauseDate(causeListRows[0]?.cause_date ?? today);
       setTotalCauseListCount(causeListRows.length);
 
-      // Step 2: Fetch user's cases from Supabase
-      const { data: casesData, error: casesError } = await supabase
-        .from('cases')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (casesError) throw casesError;
-
-      const cases = (casesData ?? []) as Case[];
+      // Step 3: Fetch user's cases from Supabase result
+      const cases = (casesResult.data ?? []) as Case[];
       if (cases.length === 0) {
         setMatchedRecords([]);
         setLoading(false);

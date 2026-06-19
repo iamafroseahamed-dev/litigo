@@ -47,7 +47,25 @@ MHC_XML_BASE = (
 
 # ── Supabase helpers ───────────────────────────────────────────────────────────
 
-def _sb_fetch_today(cause_date: str) -> List[Dict[str, Any]]:
+def _sb_latest_date(up_to: str) -> str | None:
+    """Return the most recent cause_date in Supabase that is <= up_to."""
+    url = (
+        f'{SUPABASE_URL}/rest/v1/daily_cause_list'
+        f'?cause_date=lte.{up_to}'
+        '&court_name=eq.Madras%20High%20Court'
+        '&bench=eq.Chennai'
+        '&select=cause_date'
+        '&order=cause_date.desc'
+        '&limit=1'
+    )
+    resp = requests.get(url, headers=_SB_HEADERS, timeout=SB_TIMEOUT)
+    resp.raise_for_status()
+    rows = resp.json() or []
+    return rows[0]['cause_date'] if rows else None
+
+
+def _sb_fetch_date(cause_date: str) -> List[Dict[str, Any]]:
+    """Fetch all cause list rows for a specific date from Supabase."""
     url = (
         f'{SUPABASE_URL}/rest/v1/daily_cause_list'
         f'?cause_date=eq.{cause_date}'
@@ -153,12 +171,15 @@ class handler(BaseHTTPRequestHandler):
         # ── Fast path: Supabase ────────────────────────────────────────────────
         if not force:
             try:
-                rows = _sb_fetch_today(cause_date)
-                if rows:
-                    print(f'[cause-list] Supabase hit: {len(rows)} rows')
-                    self._json(rows)
-                    return
-                print('[cause-list] Supabase miss — fetching from MHC')
+                # Find most recent available date (today or earlier)
+                latest = _sb_latest_date(cause_date)
+                if latest:
+                    rows = _sb_fetch_date(latest)
+                    if rows:
+                        print(f'[cause-list] Supabase hit: {len(rows)} rows for {latest}')
+                        self._json(rows)
+                        return
+                print('[cause-list] Supabase empty — fetching from MHC')
             except Exception as exc:
                 print(f'[cause-list] Supabase read failed ({exc}) — falling back to MHC')
         else:
