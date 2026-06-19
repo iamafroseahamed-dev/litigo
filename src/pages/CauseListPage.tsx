@@ -37,18 +37,15 @@ interface DailyCauseListRecord {
 type SortField = 'court_hall' | 'item_number' | 'judge_name' | 'case_number';
 type SortDir = 'asc' | 'desc';
 
-async function fetchFromPythonApi(): Promise<DailyCauseListRecord[]> {
-  console.log('Refreshing cause list...');
-  const resp = await fetch(
-    `/api/todays-cause-list?t=${Date.now()}`,
-    {
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-      },
-    },
-  );
+async function fetchFromPythonApi(forceRefresh = false): Promise<DailyCauseListRecord[]> {
+  const url = forceRefresh
+    ? `/api/todays-cause-list?refresh=1&t=${Date.now()}`
+    : `/api/todays-cause-list?t=${Date.now()}`;
+  console.log(forceRefresh ? 'Force-refreshing cause list from MHC...' : 'Loading cause list...');
+  const resp = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+  });
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
     try {
@@ -59,7 +56,6 @@ async function fetchFromPythonApi(): Promise<DailyCauseListRecord[]> {
   }
   const rows: DailyCauseListRecord[] = await resp.json();
   console.log('Records returned:', rows.length);
-  console.log('First record:', rows[0]);
   return rows;
 }
 
@@ -78,11 +74,11 @@ export default function CauseListPage() {
   const [sortField, setSortField] = useState<SortField>('court_hall');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     setError(null);
     setLoading(true);
     try {
-      const rows = await fetchFromPythonApi();
+      const rows = await fetchFromPythonApi(forceRefresh);
       setRecords(rows);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -172,7 +168,7 @@ export default function CauseListPage() {
             size="sm"
             className="h-9 gap-1"
             onClick={async () => {
-              await loadData();
+              await loadData(true);
             }}
             disabled={loading}
           >

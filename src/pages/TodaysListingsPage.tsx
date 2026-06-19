@@ -868,31 +868,26 @@ export default function TodaysListingsPage() {
   const [page, setPage] = useState(1);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     setError(null);
 
     try {
-      // Step 1: Get today's cause list from the API (always fresh, no cache)
-      let causeListRows: DailyCauseListRecord[] = [];
-
-      console.log('Refreshing cause list...');
-      const resp = await fetch(
-        `/api/todays-cause-list?t=${Date.now()}`,
-        {
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-          },
-        },
-      );
+      // Step 1: Get today's cause list — Supabase fast path unless forced
+      const url = forceRefresh
+        ? `/api/todays-cause-list?refresh=1&t=${Date.now()}`
+        : `/api/todays-cause-list?t=${Date.now()}`;
+      console.log(forceRefresh ? 'Force-refreshing cause list from MHC...' : 'Loading cause list...');
+      const resp = await fetch(url, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+      });
       if (!resp.ok) {
         let detail = `HTTP ${resp.status}`;
         try { const body = await resp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
         throw new Error(`Cause list unavailable: ${detail}`);
       }
-      causeListRows = await resp.json();
+      const causeListRows: DailyCauseListRecord[] = await resp.json();
       console.log('Records returned:', causeListRows.length);
       console.log('First record:', causeListRows[0]);
 
@@ -1345,7 +1340,7 @@ export default function TodaysListingsPage() {
             onClick={async () => {
               setIsRefreshing(true);
               try {
-                await fetchData();
+                await fetchData(true);
                 toast.success('Cause list refreshed successfully.');
               } catch {
                 toast.error('Unable to refresh cause list. Please try again.');
