@@ -80,7 +80,7 @@ function Sidebar({
           {!collapsed && (
             <div className="overflow-hidden pr-8 lg:pr-0">
               <p className="truncate text-sm font-bold leading-tight">{user?.organization.organization_name}</p>
-              <p className="truncate text-xs text-sidebar-foreground/60">Litigo · Legal-Tech SaaS</p>
+              <p className="truncate text-xs text-sidebar-foreground/60">Litigo · Legal Intelligence Platform</p>
             </div>
           )}
         </div>
