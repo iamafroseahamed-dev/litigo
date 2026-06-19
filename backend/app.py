@@ -19,6 +19,7 @@ from urllib3.util.retry import Retry
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
 from pydantic_settings import BaseSettings
 
@@ -423,15 +424,19 @@ def _parse_mhc_xml(xml_bytes: bytes, cause_date_str: str, xml_url: str) -> List[
 
 
 @app.get('/api/todays-cause-list')
-def get_todays_cause_list() -> List[Dict[str, Any]]:
+def get_todays_cause_list() -> JSONResponse:
     today = date.today()
     cause_date_str = today.isoformat()
     date_for_url = today.strftime('%d%m%Y')
     xml_url = MHC_XML_BASE.format(date=date_for_url)
 
+    print(f'[cause-list] Timestamp: {datetime.utcnow().isoformat()}')
+    print(f'[cause-list] Downloading XML: {xml_url}')
+
     try:
         xml_resp = requests.get(xml_url, timeout=(10, 30), verify=False)
         xml_resp.raise_for_status()
+        print(f'[cause-list] XML Download Status: {xml_resp.status_code}')
     except requests.RequestException as exc:
         raise HTTPException(
             status_code=503,
@@ -456,7 +461,16 @@ def get_todays_cause_list() -> List[Dict[str, Any]]:
     if not parsed_rows:
         raise HTTPException(status_code=404, detail="No records found in today's cause list XML.")
 
-    return parsed_rows
+    print(f'[cause-list] Parsed Rows: {len(parsed_rows)}')
+    print(f'[cause-list] Returned Rows: {len(parsed_rows)}')
+
+    return JSONResponse(
+        content=parsed_rows,
+        headers={
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'Pragma': 'no-cache',
+        },
+    )
 
 
 def to_array(value: Any) -> List[Any]:

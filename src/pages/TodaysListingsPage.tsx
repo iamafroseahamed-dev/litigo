@@ -866,17 +866,23 @@ export default function TodaysListingsPage() {
   const [sortField, setSortField] = useState<SortField>('court_hall');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const getCauseListCacheKey = useCallback(() =>
+    'cause_list_cache_' + new Date().toISOString().split('T')[0]
+  , []);
+
+  const fetchData = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     setError(null);
 
     try {
       // Step 1: Get today's cause list from the live Python API (shared cache with Cause List page)
-      const cacheKey = 'cause_list_cache_' + new Date().toISOString().split('T')[0];
+      const cacheKey = getCauseListCacheKey();
       let causeListRows: DailyCauseListRecord[] = [];
 
       const cached = (() => {
+        if (forceRefresh) return null;
         try {
           const raw = localStorage.getItem(cacheKey);
           return raw ? (JSON.parse(raw) as DailyCauseListRecord[]) : null;
@@ -886,13 +892,27 @@ export default function TodaysListingsPage() {
       if (cached && cached.length > 0) {
         causeListRows = cached;
       } else {
-        const resp = await fetch('/api/todays-cause-list');
+        console.log('Refreshing cause list...');
+        const resp = await fetch(
+          `/api/todays-cause-list?t=${Date.now()}`,
+          {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+            },
+          },
+        );
         if (!resp.ok) {
           let detail = `HTTP ${resp.status}`;
           try { const body = await resp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
           throw new Error(`Cause list unavailable: ${detail}`);
         }
         causeListRows = await resp.json();
+        console.log('Records returned:', causeListRows.length);
+        console.log('First record:', causeListRows[0]);
+        // Save fresh data to cache
+        try { localStorage.setItem(cacheKey, JSON.stringify(causeListRows)); } catch { /* ignore quota errors */ }
       }
 
       const today = new Date().toISOString().split('T')[0];
@@ -1030,7 +1050,7 @@ export default function TodaysListingsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getCauseListCacheKey]);
 
   useEffect(() => {
     fetchData();
@@ -1322,18 +1342,41 @@ export default function TodaysListingsPage() {
   return (
     <>
       <div className="space-y-5 p-6">
-        <div>
-          <h1 className="text-xl font-semibold">Today's Listings</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Cases listed today in Madras High Court that are being tracked in Litigo.
-            {causeDate && !loading && (
-              <span className="ml-1">
-                · {causeDate === new Date().toISOString().split('T')[0] ? "Today's" : 'Latest available'} cause list:
-                {' '}
-                <span className="font-medium">{fmtDate(causeDate)}</span>
-              </span>
-            )}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h1 className="text-xl font-semibold">Today's Listings</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Cases listed today in Madras High Court that are being tracked in Litigo.
+              {causeDate && !loading && (
+                <span className="ml-1">
+                  · {causeDate === new Date().toISOString().split('T')[0] ? "Today's" : 'Latest available'} cause list:
+                  {' '}
+                  <span className="font-medium">{fmtDate(causeDate)}</span>
+                </span>
+              )}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1"
+            disabled={loading || isRefreshing}
+            onClick={async () => {
+              setIsRefreshing(true);
+              localStorage.removeItem(getCauseListCacheKey());
+              try {
+                await fetchData(true);
+                toast.success('Cause list refreshed successfully.');
+              } catch {
+                toast.error('Unable to refresh cause list. Please try again.');
+              } finally {
+                setIsRefreshing(false);
+              }
+            }}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

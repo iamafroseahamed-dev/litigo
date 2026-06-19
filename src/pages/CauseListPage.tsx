@@ -65,7 +65,17 @@ function saveToCache(rows: DailyCauseListRecord[]): void {
 }
 
 async function fetchFromPythonApi(): Promise<DailyCauseListRecord[]> {
-  const resp = await fetch('/api/todays-cause-list');
+  console.log('Refreshing cause list...');
+  const resp = await fetch(
+    `/api/todays-cause-list?t=${Date.now()}`,
+    {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+      },
+    },
+  );
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
     try {
@@ -74,7 +84,10 @@ async function fetchFromPythonApi(): Promise<DailyCauseListRecord[]> {
     } catch { /* ignore */ }
     throw new Error(detail);
   }
-  return resp.json();
+  const rows: DailyCauseListRecord[] = await resp.json();
+  console.log('Records returned:', rows.length);
+  console.log('First record:', rows[0]);
+  return rows;
 }
 
 export default function CauseListPage() {
@@ -202,7 +215,10 @@ export default function CauseListPage() {
             variant="outline"
             size="sm"
             className="h-9 gap-1"
-            onClick={() => loadData(true)}
+            onClick={async () => {
+              localStorage.removeItem(getTodayCacheKey());
+              await loadData(true);
+            }}
             disabled={loading}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
