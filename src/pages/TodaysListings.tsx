@@ -268,7 +268,7 @@ function DynamicTable({ table }: { table: CaseDetailsTable }) {
 
   const openPdf = (originalUrl: string) => {
     const filename = extractFilename(originalUrl);
-    const viewerUrl = `https://hcmadras.tn.gov.in/order_view.php?fileName=${encodeURIComponent(filename)}`;
+    const viewerUrl = `https://mhc.tn.gov.in/judis/index.php/casestatus/viewpdf/${encodeURIComponent(filename)}`;
     window.open(viewerUrl, '_blank', 'noopener,noreferrer');
   };
 
@@ -1229,7 +1229,7 @@ export default function TodaysListingsPage() {
   const [caseDetails, setCaseDetails] = useState<CaseDetailsResponse | null>(null);
   const [caseDetailsResults, setCaseDetailsResults] = useState<CaseDetailsResponse[]>([]);
   const [mhcResult, setMhcResult] = useState<MhcStatusResult | null>(null);
-  const [mhcLoading, setMhcLoading] = useState(false);
+  const [mhcLoading] = useState(false);
 
   const [captchaDialogOpen, setCaptchaDialogOpen] = useState(false);
   const [captchaValue, setCaptchaValue] = useState('');
@@ -1561,7 +1561,8 @@ export default function TodaysListingsPage() {
     return <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
-  const fetchCaseDetails = useCallback(async (record: MatchedRecord, captcha?: string, captchaTokenOverride?: string) => {
+  // ── "Details" button → MHC only (uses cause list case number, fast) ─────
+  const fetchCaseDetails = useCallback(async (record: MatchedRecord) => {
     setSelectedRecord(record);
     setDetailsDialogOpen(true);
     setDetailsError(null);
@@ -1569,44 +1570,58 @@ export default function TodaysListingsPage() {
     setCaseDetailsResults([]);
     setMhcResult(null);
 
-    const cnrs = extractCnrNumbers(record).filter(Boolean);
-    const primaryCnr = cnrs[0] ?? '';
-    const caseNum =
-      normalizeText(record.causeList.case_number) ||
-      normalizeText(record.case.case_number);
-
-    // ── Primary path: MHC viewstatus (fast, no captcha, returns PDF link) ─
-    // Only when we have a cause-list case number and no captcha override
-    if (!captcha && caseNum) {
-      setDetailsLoading(true);
-      setLoadingMessage(`Fetching orders from MHC… (${caseNum})`);
-      try {
-        const mhcRes = await fetch('/api/mhc/case-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ case_number: caseNum }),
-        });
-        if (mhcRes.ok) {
-          const mhcData = await mhcRes.json() as MhcStatusResult;
-          if (mhcData.success) {
-            setMhcResult(mhcData);
-            setDetailsLoading(false);
-            return;
-          }
-        }
-      } catch { /* fall through to eCourts */ }
-      setDetailsLoading(false);
+    const caseNum = normalizeText(record.causeList.case_number);
+    if (!caseNum) {
+      setDetailsError('No case number available for this record.');
+      return;
     }
 
-    // ── No CNR: captcha flow (case-number search) ──────────────────────────
-    if (!primaryCnr && !captcha) {
+    setDetailsLoading(true);
+    setLoadingMessage(`Fetching orders from MHC… (${caseNum})`);
+    try {
+      const res = await fetch('/api/mhc/case-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_number: caseNum }),
+      });
+      const data = await res.json() as MhcStatusResult;
+      if (res.ok && data.success) {
+        setMhcResult(data);
+      } else {
+        setDetailsError(
+          (data as { message?: string }).message ||
+          `MHC returned ${res.status}. Use "Load Case History" below to try eCourts.`,
+        );
+      }
+    } catch (e) {
+      setDetailsError(
+        `Unable to reach MHC: ${e instanceof Error ? e.message : 'Network error'}. ` +
+        'Use "Load Case History" to try eCourts.',
+      );
+    } finally {
+      setDetailsLoading(false);
+    }
+  }, []);
+
+  // ── "Load Case History" button → eCourts with CNR (slow, needs captcha) ─
+  const loadEcourtsHistory = useCallback(async (record: MatchedRecord, captcha?: string, captchaTokenOverride?: string) => {
+    if (!record) return;
+    setMhcResult(null);
+    setDetailsError(null);
+    setCaseDetails(null);
+    setCaseDetailsResults([]);
+
+    const cnrs = extractCnrNumbers(record).filter(Boolean);
+    const caseNum = normalizeText(record.causeList.case_number) || normalizeText(record.case.case_number);
+
+    // No CNR available — use case number (requires captcha)
+    if (cnrs.length === 0 && !captcha) {
       if (!caseNum) {
-        setDetailsLoading(false);
-        setDetailsError('Neither CNR nor Case Number is available for this record.');
+        setDetailsError('No CNR or case number available.');
         return;
       }
       setDetailsLoading(true);
-      setLoadingMessage('Fetching case details from eCourts...');
+      setLoadingMessage('Connecting to eCourts…');
       try {
         const res = await fetch('/api/ecourts/case-details', {
           method: 'POST',
@@ -1615,42 +1630,38 @@ export default function TodaysListingsPage() {
         });
         let data: CaseDetailsResponse | null = null;
         try { data = (await res.json()) as CaseDetailsResponse; } catch { data = null; }
-        if (!res.ok) throw new Error(data?.message || `Backend returned ${res.status}.`);
+        if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
         if (data?.requiresCaptcha) {
           setDetailsDialogOpen(false);
           setCaptchaDialogOpen(true);
           setCaptchaValue('');
           setCaptchaImage(data.captchaImage ?? null);
           setCaptchaToken(data.captchaToken ?? null);
-          setCaptchaMessage(data.message ?? 'Captcha required for case number search.');
+          setCaptchaMessage(data.message ?? 'Enter the captcha to continue.');
           return;
         }
-        if (data?.error === 'CASE_TYPE_MAPPING_NOT_FOUND') { setCaseDetails(data); return; }
-        if (!data?.success) { setDetailsError(data?.message || 'Unable to fetch case details.'); return; }
+        if (!data?.success) { setDetailsError(data?.message || 'eCourts lookup failed.'); return; }
         setCaseDetails(data);
         setCaseDetailsResults([data]);
-        if (data.cnr_number) {
-          const dc = data.cnr_number.trim();
-          setMatchedRecords(prev => prev.map(r => r === record
-            ? { ...r, causeList: { ...r.causeList, cnr_number: r.causeList.cnr_number || dc }, case: { ...r.case, cnr_number: r.case.cnr_number || dc } }
-            : r));
-        }
       } catch (err) {
-        setDetailsError(err instanceof Error ? err.message : 'Unable to fetch case details.');
+        setDetailsError(err instanceof Error ? err.message : 'eCourts lookup failed.');
       } finally { setDetailsLoading(false); }
       return;
     }
 
-    // ── Captcha submit: single CNR fetch ──────────────────────────────────
-    if (captcha && !primaryCnr) {
+    // Captcha submit
+    if (captcha && cnrs.length === 0) {
       setDetailsLoading(true);
-      setLoadingMessage('Fetching case details from eCourts...');
+      setLoadingMessage('Submitting captcha…');
       try {
-        const payload = { case_number: caseNum, captcha: captcha.trim(), captcha_token: captchaTokenOverride ?? '' };
-        const response = await fetch('/api/ecourts/case-details', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const res = await fetch('/api/ecourts/case-details', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ case_number: caseNum, captcha: captcha.trim(), captcha_token: captchaTokenOverride ?? '' }),
+        });
         let data: CaseDetailsResponse | null = null;
-        try { data = (await response.json()) as CaseDetailsResponse; } catch { data = null; }
-        if (!response.ok) throw new Error(data?.message || `Backend returned ${response.status}.`);
+        try { data = (await res.json()) as CaseDetailsResponse; } catch { data = null; }
+        if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
         if (data?.requiresCaptcha) {
           setDetailsDialogOpen(false);
           setCaptchaDialogOpen(true);
@@ -1660,117 +1671,71 @@ export default function TodaysListingsPage() {
           setCaptchaMessage(data.message ?? 'Invalid captcha. Please try again.');
           return;
         }
-        if (data?.error === 'CASE_TYPE_MAPPING_NOT_FOUND') { setCaseDetails(data); return; }
-        if (!data?.success) { setDetailsError(data?.message || 'Unable to fetch case details.'); return; }
+        if (!data?.success) { setDetailsError(data?.message || 'eCourts lookup failed.'); return; }
         setCaseDetails(data);
         setCaseDetailsResults([data]);
       } catch (err) {
-        setDetailsError(err instanceof Error ? err.message : 'Unable to fetch case details.');
+        setDetailsError(err instanceof Error ? err.message : 'eCourts lookup failed.');
       } finally { setDetailsLoading(false); }
       return;
     }
 
-    // ── One or more CNRs found ─────────────────────────────────────────────
+    // CNRs available — fetch each from eCourts
     setDetailsLoading(true);
     const results: CaseDetailsResponse[] = [];
     const errors: string[] = [];
-
     try {
-      // ── 1. Try MHC viewstatus first (JSON API, fast, no captcha) ─────────
-      const causeListCaseNum = normalizeText(record.causeList.case_number);
-      if (causeListCaseNum) {
-        setLoadingMessage(`Fetching orders from MHC… (${causeListCaseNum})`);
+      for (let i = 0; i < cnrs.length; i++) {
+        const cnr = cnrs[i];
+        const cacheKey = `case_history_${cnr}`;
         try {
-          const mhcRes = await fetch('/api/mhc/case-status', {
+          const cached = sessionStorage.getItem(cacheKey);
+          if (cached) {
+            const p = JSON.parse(cached) as CaseDetailsResponse;
+            if (p.success) { results.push(p); continue; }
+          }
+        } catch { /* ignore */ }
+
+        setLoadingMessage(`Fetching history ${i + 1}/${cnrs.length}… (${cnr})`);
+        try {
+          const res = await fetch('/api/ecourts/case-details', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ case_number: causeListCaseNum }),
+            body: JSON.stringify({ cnr_number: cnr }),
           });
-          if (mhcRes.ok) {
-            const mhcData = await mhcRes.json() as CaseDetailsResponse;
-            if (mhcData.success && (mhcData.tables?.length ?? 0) > 0) {
-              results.push(mhcData);
-            }
+          let data: CaseDetailsResponse | null = null;
+          try { data = (await res.json()) as CaseDetailsResponse; } catch { /* ignore */ }
+          if (!res.ok) { errors.push(`${cnr}: HTTP ${res.status}`); continue; }
+          if (data?.requiresCaptcha) {
+            setDetailsDialogOpen(false);
+            setCaptchaDialogOpen(true);
+            setCaptchaValue('');
+            setCaptchaImage(data.captchaImage ?? null);
+            setCaptchaToken(data.captchaToken ?? null);
+            setCaptchaMessage(data.message ?? 'Captcha required.');
+            return;
           }
-        } catch { /* fall through to eCourts */ }
-      }
-
-      // ── 2. eCourts per CNR (only if MHC returned nothing) ────────────────
-      if (results.length === 0) {
-        async function fetchOneCnr(cnr: string, idx: number): Promise<CaseDetailsResponse | null> {
-          const cacheKey = `case_history_${cnr}`;
-          try {
-            const cached = sessionStorage.getItem(cacheKey);
-            if (cached) {
-              const parsed = JSON.parse(cached) as CaseDetailsResponse;
-              if (parsed.success) return parsed;
-            }
-          } catch { /* ignore */ }
-
-          setLoadingMessage(`Fetching case history ${idx + 1} of ${cnrs.length}… (${cnr})`);
-          try {
-            const res = await fetch('/api/ecourts/case-details', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cnr_number: cnr }),
-            });
-            let data: CaseDetailsResponse | null = null;
-            try { data = (await res.json()) as CaseDetailsResponse; } catch { /* ignore */ }
-
-            if (!res.ok) {
-              errors.push(`${cnr}: ${data?.message ?? `HTTP ${res.status}`}`);
-              return null;
-            }
-            if (data?.requiresCaptcha) {
-              setDetailsDialogOpen(false);
-              setCaptchaDialogOpen(true);
-              setCaptchaValue('');
-              setCaptchaImage(data.captchaImage ?? null);
-              setCaptchaToken(data.captchaToken ?? null);
-              setCaptchaMessage(data.message ?? 'Captcha required.');
-              return null;
-            }
-            if (!data?.success) {
-              errors.push(`${cnr}: ${data?.message ?? data?.error ?? 'Unknown error'}`);
-              return null;
-            }
-            try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
-            return data;
-          } catch (e) {
-            errors.push(`${cnr}: ${e instanceof Error ? e.message : 'Network error'}`);
-            return null;
-          }
-        }
-
-        for (let i = 0; i < cnrs.length; i++) {
-          const result = await fetchOneCnr(cnrs[i], i);
-          if (result) results.push(result);
+          if (!data?.success) { errors.push(`${cnr}: ${data?.message ?? 'failed'}`); continue; }
+          try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
+          results.push(data);
+        } catch (e) {
+          errors.push(`${cnr}: ${e instanceof Error ? e.message : 'error'}`);
         }
       }
-
       if (results.length === 0) {
         setDetailsError(errors.length > 0
-          ? `eCourts lookup failed:\n${errors.join('\n')}`
-          : 'Unable to fetch case details. The eCourts server may be slow or unavailable.');
+          ? `eCourts failed:\n${errors.join('\n')}`
+          : 'No data returned from eCourts.');
       } else {
         setCaseDetails(results[0]);
         setCaseDetailsResults(results);
       }
     } catch (err) {
-      setDetailsError(err instanceof Error ? err.message : 'Unable to fetch case details.');
+      setDetailsError(err instanceof Error ? err.message : 'eCourts lookup failed.');
     } finally {
       setDetailsLoading(false);
     }
   }, []);
-
-  // Load full case history from eCourts (called from MhcOrderPanel "Load History" button)
-  const loadEcourtsHistory = useCallback(async () => {
-    if (!selectedRecord) return;
-    setMhcLoading(true);
-    setMhcResult(null);
-    await fetchCaseDetails(selectedRecord, undefined, undefined);
-    setMhcLoading(false);
-  }, [selectedRecord, fetchCaseDetails]);
 
   const refreshCaptcha = useCallback(async () => {
     if (!selectedRecord) return;
@@ -1800,7 +1765,7 @@ export default function TodaysListingsPage() {
     if (!selectedRecord || !captchaValue.trim()) return;
     setCaptchaSubmitting(true);
     setCaptchaDialogOpen(false);
-    await fetchCaseDetails(selectedRecord, captchaValue.trim(), captchaToken ?? undefined);
+    await loadEcourtsHistory(selectedRecord, captchaValue.trim(), captchaToken ?? undefined);
     setCaptchaSubmitting(false);
   }
 
@@ -2083,7 +2048,7 @@ export default function TodaysListingsPage() {
           {mhcResult && (
             <MhcOrderPanel
               result={mhcResult}
-              onLoadHistory={loadEcourtsHistory}
+              onLoadHistory={() => selectedRecord && loadEcourtsHistory(selectedRecord)}
               loadingHistory={mhcLoading}
             />
           )}
