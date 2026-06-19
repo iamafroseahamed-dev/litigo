@@ -873,43 +873,28 @@ export default function TodaysListingsPage() {
     setError(null);
 
     try {
-      // Step 1: Get today's cause list from the live Python API (shared cache with Cause List page)
-      const cacheKey = getCauseListCacheKey();
+      // Step 1: Get today's cause list from the API (always fresh, no cache)
       let causeListRows: DailyCauseListRecord[] = [];
 
-      const cached = (() => {
-        if (forceRefresh) return null;
-        try {
-          const raw = localStorage.getItem(cacheKey);
-          return raw ? (JSON.parse(raw) as DailyCauseListRecord[]) : null;
-        } catch { return null; }
-      })();
-
-      if (cached && cached.length > 0) {
-        causeListRows = cached;
-      } else {
-        console.log('Refreshing cause list...');
-        const resp = await fetch(
-          `/api/todays-cause-list?t=${Date.now()}`,
-          {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache',
-            },
+      console.log('Refreshing cause list...');
+      const resp = await fetch(
+        `/api/todays-cause-list?t=${Date.now()}`,
+        {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
           },
-        );
-        if (!resp.ok) {
-          let detail = `HTTP ${resp.status}`;
-          try { const body = await resp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
-          throw new Error(`Cause list unavailable: ${detail}`);
-        }
-        causeListRows = await resp.json();
-        console.log('Records returned:', causeListRows.length);
-        console.log('First record:', causeListRows[0]);
-        // Save fresh data to cache
-        try { localStorage.setItem(cacheKey, JSON.stringify(causeListRows)); } catch { /* ignore quota errors */ }
+        },
+      );
+      if (!resp.ok) {
+        let detail = `HTTP ${resp.status}`;
+        try { const body = await resp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
+        throw new Error(`Cause list unavailable: ${detail}`);
       }
+      causeListRows = await resp.json();
+      console.log('Records returned:', causeListRows.length);
+      console.log('First record:', causeListRows[0]);
 
       const today = new Date().toISOString().split('T')[0];
       setCauseDate(causeListRows[0]?.cause_date ?? today);
