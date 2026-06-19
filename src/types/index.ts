@@ -119,6 +119,65 @@ export interface Notification {
   case?: Case;
 }
 
+// ── Notification Recipients (per case) ────────────────────────────────────────
+export interface CaseNotificationRecipient {
+  id: string;
+  organization_id: string;
+  case_id: string;
+  recipient_name: string;
+  recipient_role: string | null;
+  email: string | null;
+  mobile_number: string | null;
+  whatsapp_number: string | null;
+  notify_email: boolean;
+  notify_sms: boolean;
+  notify_whatsapp: boolean;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Notification Log ──────────────────────────────────────────────────────────
+export interface NotificationLog {
+  id: string;
+  organization_id: string | null;
+  case_id: string | null;
+  cause_list_id: string | null;
+  cause_date: string | null;
+  notification_type: string | null;
+  recipient_name: string | null;
+  recipient_role: string | null;
+  recipient_email: string | null;
+  recipient_mobile: string | null;
+  recipient_whatsapp: string | null;
+  subject: string | null;
+  message: string | null;
+  status: string | null; // 'sent' | 'failed' | 'pending'
+  provider: string | null;
+  provider_response: Record<string, unknown> | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+// Status shown per case in Today's Listings
+export type CauseListNotifStatus =
+  | 'not_notified'
+  | 'notified'
+  | 'partial'
+  | 'failed'
+  | 'no_recipients';
+
+export interface NotificationProvider {
+  id: string;
+  organization_id: string;
+  provider_type: string; // 'email' | 'sms' | 'whatsapp'
+  provider_name: string;
+  config: Record<string, unknown>;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface NotificationLog {
   id?: string;
   case_id: string;

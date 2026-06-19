@@ -4,12 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -34,10 +38,10 @@ import {
 } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Search, X, Eye, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react';
+import { Search, X, Eye, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Bell, BellOff, Send } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import type { Case } from '@/types';
+import type { Case, CaseNotificationRecipient, CauseListNotifStatus, NotificationLog } from '@/types';
 
 interface DailyCauseListRecord {
   id?: string;
@@ -836,6 +840,248 @@ function CaseDetailsModal({
   );
 }
 
+// ── Notification Status Badge ─────────────────────────────────────────────────
+
+function NotifStatusBadge({ status }: { status: CauseListNotifStatus | undefined }) {
+  if (!status) return null;
+  const map: Record<CauseListNotifStatus, { label: string; variant: 'secondary' | 'success' | 'warning' | 'destructive' | 'outline' }> = {
+    not_notified:  { label: 'Not Notified', variant: 'secondary' },
+    notified:      { label: 'Notified',     variant: 'success' },
+    partial:       { label: 'Partial',      variant: 'warning' },
+    failed:        { label: 'Failed',       variant: 'destructive' },
+    no_recipients: { label: 'No Recipients', variant: 'outline' },
+  };
+  const { label, variant } = map[status];
+  return <Badge variant={variant} className="text-[10px] whitespace-nowrap">{label}</Badge>;
+}
+
+// ── Notify Modal ──────────────────────────────────────────────────────────────
+
+function buildMessage(record: MatchedRecord, recipientName: string): { subject: string; message: string } {
+  const cl = record.causeList;
+  const c  = record.case;
+  const subject = `Court Listing Alert — ${c.case_number}`;
+  const message =
+`Dear ${recipientName},
+
+This is to inform you that the following case has been listed before the court.
+
+Case Number: ${c.case_number}
+CNR Number: ${cl.cnr_number ?? c.cnr_number ?? '—'}
+Court: Madras High Court
+Bench: Chennai
+Court Hall: ${cl.court_hall ?? '—'}
+Item Number: ${cl.item_number ?? '—'}
+Judge: ${cl.judge_name ?? '—'}
+Stage: ${cl.last_hearing_or_stage ?? '—'}
+Cause List Date: ${cl.cause_date}
+
+Petitioner: ${cl.petitioner ?? c.petitioner ?? '—'}
+Respondent: ${cl.respondent ?? c.respondent ?? '—'}
+
+Please take necessary action.
+
+Regards,
+Litigo`;
+  return { subject, message };
+}
+
+interface RecipientSelection {
+  recipient: CaseNotificationRecipient;
+  sendEmail: boolean;
+  sendSms: boolean;
+  sendWhatsapp: boolean;
+}
+
+function NotifyModal({ record, onClose, causeDate }: {
+  record: MatchedRecord | null;
+  onClose: () => void;
+  causeDate: string | null;
+}) {
+  const [recipients, setRecipients] = useState<CaseNotificationRecipient[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selections, setSelections] = useState<RecipientSelection[]>([]);
+  const [subject, setSubject] = useState('');
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!record) return;
+    setLoading(true);
+    const { subject: s, message: m } = buildMessage(record, 'Recipient');
+    setSubject(s);
+    setMessage(m);
+    (async () => {
+      const { data } = await supabase
+        .from('case_notification_recipients')
+        .select('*')
+        .eq('case_id', record.case.id)
+        .eq('active', true)
+        .order('created_at');
+      const recs = (data ?? []) as CaseNotificationRecipient[];
+      setRecipients(recs);
+      setSelections(recs.map(r => ({
+        recipient: r,
+        sendEmail: r.notify_email && !!r.email,
+        sendSms: r.notify_sms && !!r.mobile_number,
+        sendWhatsapp: r.notify_whatsapp && !!r.whatsapp_number,
+      })));
+      setLoading(false);
+    })();
+  }, [record]);
+
+  async function handleSend() {
+    if (!record) return;
+    const payload = {
+      case_id: record.case.id,
+      cause_date: causeDate,
+      subject,
+      message,
+      recipients: selections
+        .filter(s => s.sendEmail || s.sendSms || s.sendWhatsapp)
+        .map(s => ({
+          recipient_id: s.recipient.id,
+          send_email: s.sendEmail,
+          send_sms: s.sendSms,
+          send_whatsapp: s.sendWhatsapp,
+        })),
+    };
+    if (payload.recipients.length === 0) {
+      toast.error('Select at least one recipient and channel.');
+      return;
+    }
+    setSending(true);
+    try {
+      const resp = await fetch('/api/notifications/send-case-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await resp.json();
+      if (resp.ok) {
+        toast.success(`Sent ${result.sent ?? 0}, Failed ${result.failed ?? 0}.`);
+        onClose();
+      } else {
+        toast.error(result.detail ?? 'Failed to send notifications.');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to send notifications.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function toggleChannel(idx: number, channel: 'sendEmail' | 'sendSms' | 'sendWhatsapp') {
+    setSelections(prev => prev.map((s, i) => i === idx ? { ...s, [channel]: !s[channel] } : s));
+  }
+
+  if (!record) return null;
+  const cl = record.causeList;
+  const c  = record.case;
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Bell className="h-4 w-4" /> Send Case Notification
+          </DialogTitle>
+          <DialogDescription>Preview and send a cause list alert to the configured recipients.</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 text-sm">
+          {/* Case Summary */}
+          <div className="rounded-md border bg-muted/30 p-3 grid grid-cols-2 gap-2 text-xs">
+            <div><span className="text-muted-foreground">Case No:</span> <strong>{c.case_number}</strong></div>
+            <div><span className="text-muted-foreground">CNR:</span> <strong>{cl.cnr_number ?? c.cnr_number ?? '—'}</strong></div>
+            <div><span className="text-muted-foreground">Court Hall:</span> <strong>{cl.court_hall ?? '—'}</strong></div>
+            <div><span className="text-muted-foreground">Item No:</span> <strong>{cl.item_number ?? '—'}</strong></div>
+            <div><span className="text-muted-foreground">Judge:</span> <strong>{cl.judge_name ?? '—'}</strong></div>
+            <div><span className="text-muted-foreground">Stage:</span> <strong>{cl.last_hearing_or_stage ?? '—'}</strong></div>
+            <div><span className="text-muted-foreground">Date:</span> <strong>{cl.cause_date}</strong></div>
+            <div><span className="text-muted-foreground">Petitioner:</span> <span className="truncate">{cl.petitioner ?? '—'}</span></div>
+          </div>
+
+          {/* Recipients */}
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recipients</Label>
+            {loading && <p className="text-xs text-muted-foreground">Loading recipients…</p>}
+            {!loading && recipients.length === 0 && (
+              <p className="text-xs text-muted-foreground rounded-md border border-dashed p-3 text-center">
+                No active notification recipients configured for this case.
+              </p>
+            )}
+            {selections.map((sel, idx) => (
+              <div key={sel.recipient.id} className="rounded-md border px-3 py-2 space-y-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-sm">{sel.recipient.recipient_name}</p>
+                    {sel.recipient.recipient_role && <p className="text-xs text-muted-foreground">{sel.recipient.recipient_role}</p>}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3 text-xs">
+                  {sel.recipient.email && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <Switch
+                        checked={sel.sendEmail}
+                        onCheckedChange={() => toggleChannel(idx, 'sendEmail')}
+                        className="scale-75"
+                      />
+                      Email <span className="text-muted-foreground">({sel.recipient.email})</span>
+                    </label>
+                  )}
+                  {sel.recipient.mobile_number && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <Switch
+                        checked={sel.sendSms}
+                        onCheckedChange={() => toggleChannel(idx, 'sendSms')}
+                        className="scale-75"
+                        disabled
+                      />
+                      SMS <Badge variant="outline" className="text-[9px] px-1">Soon</Badge>
+                    </label>
+                  )}
+                  {sel.recipient.whatsapp_number && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <Switch
+                        checked={sel.sendWhatsapp}
+                        onCheckedChange={() => toggleChannel(idx, 'sendWhatsapp')}
+                        className="scale-75"
+                        disabled
+                      />
+                      WhatsApp <Badge variant="outline" className="text-[9px] px-1">Soon</Badge>
+                    </label>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Subject */}
+          <div className="space-y-1.5">
+            <Label>Subject</Label>
+            <Input value={subject} onChange={e => setSubject(e.target.value)} />
+          </div>
+
+          {/* Message */}
+          <div className="space-y-1.5">
+            <Label>Message</Label>
+            <Textarea rows={12} value={message} onChange={e => setMessage(e.target.value)} className="font-mono text-xs" />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSend} disabled={sending || recipients.length === 0} className="gap-1.5">
+            <Send className="h-3.5 w-3.5" />
+            {sending ? 'Sending…' : 'Send Notification'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function TodaysListingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -844,6 +1090,8 @@ export default function TodaysListingsPage() {
   const [matchedRecords, setMatchedRecords] = useState<MatchedRecord[]>([]);
   // case_number strings currently being resolved via /api/lookup-cnr
   const [cnrLoadingKeys, setCnrLoadingKeys] = useState<Set<string>>(new Set());
+  const [notifStatusMap, setNotifStatusMap] = useState<Map<string, CauseListNotifStatus>>(new Map());
+  const [notifyRecord, setNotifyRecord] = useState<MatchedRecord | null>(null);
 
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -977,7 +1225,42 @@ export default function TodaysListingsPage() {
 
       setMatchedRecords(merged);
 
-      // Step 5: For case_number-matched records without a CNR, auto-resolve via eCourts API
+      // Step 5: Load notification status for all matched cases
+      if (merged.length > 0) {
+        const caseIds = merged.map(r => r.case.id);
+        const currentCauseDate = causeListRows[0]?.cause_date ?? new Date().toISOString().split('T')[0];
+        const [logsResult, recipientsResult] = await Promise.all([
+          supabase
+            .from('notification_logs')
+            .select('case_id,status')
+            .in('case_id', caseIds)
+            .eq('cause_date', currentCauseDate),
+          supabase
+            .from('case_notification_recipients')
+            .select('case_id')
+            .in('case_id', caseIds)
+            .eq('active', true),
+        ]);
+        const logs = (logsResult.data ?? []) as Pick<NotificationLog, 'case_id' | 'status'>[];
+        const activeRecipientCaseIds = new Set((recipientsResult.data ?? []).map((r: { case_id: string }) => r.case_id));
+
+        const statusMap = new Map<string, CauseListNotifStatus>();
+        for (const caseId of caseIds) {
+          const caseLogs = logs.filter(l => l.case_id === caseId);
+          if (caseLogs.length === 0) {
+            statusMap.set(caseId, activeRecipientCaseIds.has(caseId) ? 'not_notified' : 'no_recipients');
+          } else {
+            const sent   = caseLogs.filter(l => l.status === 'sent').length;
+            const failed = caseLogs.filter(l => l.status === 'failed').length;
+            if (failed === 0) statusMap.set(caseId, 'notified');
+            else if (sent === 0) statusMap.set(caseId, 'failed');
+            else statusMap.set(caseId, 'partial');
+          }
+        }
+        setNotifStatusMap(statusMap);
+      }
+
+      // Step 6: For case_number-matched records without a CNR, auto-resolve via eCourts API
       const needsCnr = merged.filter(
         (r) => r.matchType === 'case_number' && !r.causeList.cnr_number?.trim() && r.causeList.case_number?.trim(),
       );
@@ -1492,13 +1775,14 @@ export default function TodaysListingsPage() {
                       Next Hearing <SortIcon field="next_hearing_date" />
                     </TableHead>
                     <TableHead className="whitespace-nowrap">Match Type</TableHead>
+                    <TableHead className="whitespace-nowrap">Notification</TableHead>
                     <TableHead className="whitespace-nowrap">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {paginated.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={14} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={15} className="py-10 text-center text-muted-foreground">
                         No records match your search or filters.
                       </TableCell>
                     </TableRow>
@@ -1536,10 +1820,26 @@ export default function TodaysListingsPage() {
                           <MatchTypeBadge type={record.matchType} matchedBy={record.matchedBy} />
                         </TableCell>
                         <TableCell>
-                          <Button variant="outline" size="sm" className="h-7 gap-1.5 whitespace-nowrap text-xs" onClick={() => fetchCaseDetails(record)}>
-                            <Eye className="h-3.5 w-3.5" />
-                            Show Details
-                          </Button>
+                          <NotifStatusBadge status={notifStatusMap.get(record.case.id)} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5">
+                            <Button variant="outline" size="sm" className="h-7 gap-1.5 whitespace-nowrap text-xs" onClick={() => fetchCaseDetails(record)}>
+                              <Eye className="h-3.5 w-3.5" />
+                              Details
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 gap-1.5 whitespace-nowrap text-xs"
+                              title={notifStatusMap.get(record.case.id) === 'no_recipients' ? 'No active notification recipients configured for this case.' : 'Send notification'}
+                              disabled={notifStatusMap.get(record.case.id) === 'no_recipients'}
+                              onClick={() => setNotifyRecord(record)}
+                            >
+                              <Bell className="h-3.5 w-3.5" />
+                              Notify
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -1582,6 +1882,14 @@ export default function TodaysListingsPage() {
         onRetry={retryCaseDetails}
         localCase={selectedRecord?.case ?? null}
       />
+
+      {notifyRecord && (
+        <NotifyModal
+          record={notifyRecord}
+          causeDate={causeDate}
+          onClose={() => setNotifyRecord(null)}
+        />
+      )}
 
       <Dialog open={captchaDialogOpen} onOpenChange={setCaptchaDialogOpen}>
         <DialogContent className="max-w-md">

@@ -1,6 +1,7 @@
 import base64
 from datetime import date, datetime, timedelta
 import json
+import os
 import re
 import secrets
 from threading import Lock
@@ -1775,6 +1776,155 @@ def post_extract_pdf_text(request: ExtractPdfTextRequest) -> Dict[str, str]:
         raise HTTPException(status_code=500, detail='Unable to extract text from PDF.') from exc
 
     return {'text': text}
+
+
+# ── Notifications ──────────────────────────────────────────────────────────────
+
+class NotificationRecipientPayload(BaseModel):
+    recipient_id: str
+    send_email: bool = False
+    send_sms: bool = False
+    send_whatsapp: bool = False
+
+
+class SendCaseAlertRequest(BaseModel):
+    case_id: str
+    cause_date: Optional[str] = None
+    subject: str
+    message: str
+    recipients: List[NotificationRecipientPayload]
+
+
+def _sb_get(path: str) -> Any:
+    """GET from Supabase REST API using service role key."""
+    url = f'{settings.SUPABASE_URL}/rest/v1/{path}'
+    resp = requests.get(url, headers=_SB_HEADERS, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _sb_post(path: str, payload: Any) -> Any:
+    """POST to Supabase REST API."""
+    url = f'{settings.SUPABASE_URL}/rest/v1/{path}'
+    headers = {**_SB_HEADERS, 'Prefer': 'return=minimal'}
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp
+
+
+def _send_email_resend(to_email: str, subject: str, body: str) -> Dict[str, Any]:
+    """Send email via Resend. Returns {ok, error}."""
+    resend_key = os.environ.get('RESEND_API_KEY', '')
+    from_addr = os.environ.get('RESEND_FROM', 'Litigo <notifications@litigo.in>')
+    if not resend_key:
+        return {'ok': False, 'error': 'RESEND_API_KEY not configured.'}
+    try:
+        resp = requests.post(
+            'https://api.resend.com/emails',
+            headers={'Authorization': f'Bearer {resend_key}', 'Content-Type': 'application/json'},
+            json={'from': from_addr, 'to': [to_email], 'subject': subject, 'text': body},
+            timeout=20,
+        )
+        if resp.ok:
+            return {'ok': True, 'data': resp.json()}
+        return {'ok': False, 'error': resp.text}
+    except Exception as exc:
+        return {'ok': False, 'error': str(exc)}
+
+
+@app.post('/api/notifications/send-case-alert')
+def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
+    if not request.recipients:
+        raise HTTPException(status_code=400, detail='No recipients specified.')
+
+    # Load recipient details from Supabase
+    recipient_ids = [r.recipient_id for r in request.recipients]
+    id_filter = ','.join(f'"{rid}"' for rid in recipient_ids)
+    try:
+        recs_raw = _sb_get(f'case_notification_recipients?id=in.({",".join(recipient_ids)})')
+        recs: Dict[str, Any] = {r['id']: r for r in recs_raw}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f'Failed to load recipients: {exc}') from exc
+
+    now = datetime.utcnow().isoformat()
+    sent = 0
+    failed = 0
+    logs: List[Dict[str, Any]] = []
+
+    for p in request.recipients:
+        rec = recs.get(p.recipient_id)
+        if not rec:
+            continue
+
+        # ── Email ──────────────────────────────────────────────────────────────
+        if p.send_email and rec.get('email'):
+            result = _send_email_resend(rec['email'], request.subject, request.message)
+            status = 'sent' if result['ok'] else 'failed'
+            if result['ok']:
+                sent += 1
+            else:
+                failed += 1
+            logs.append({
+                'case_id': request.case_id,
+                'cause_date': request.cause_date,
+                'organization_id': rec.get('organization_id'),
+                'notification_type': 'email',
+                'recipient_name': rec.get('recipient_name'),
+                'recipient_role': rec.get('recipient_role'),
+                'recipient_email': rec['email'],
+                'subject': request.subject,
+                'message': request.message,
+                'status': status,
+                'provider': 'resend',
+                'provider_response': result,
+                'sent_at': now,
+                'created_at': now,
+            })
+
+        # ── SMS (stub) ─────────────────────────────────────────────────────────
+        if p.send_sms and rec.get('mobile_number'):
+            logs.append({
+                'case_id': request.case_id,
+                'cause_date': request.cause_date,
+                'organization_id': rec.get('organization_id'),
+                'notification_type': 'sms',
+                'recipient_name': rec.get('recipient_name'),
+                'recipient_mobile': rec['mobile_number'],
+                'subject': request.subject,
+                'message': request.message,
+                'status': 'pending',
+                'provider': 'msg91',
+                'provider_response': {'note': 'SMS not configured yet.'},
+                'sent_at': now,
+                'created_at': now,
+            })
+
+        # ── WhatsApp (stub) ────────────────────────────────────────────────────
+        if p.send_whatsapp and rec.get('whatsapp_number'):
+            logs.append({
+                'case_id': request.case_id,
+                'cause_date': request.cause_date,
+                'organization_id': rec.get('organization_id'),
+                'notification_type': 'whatsapp',
+                'recipient_name': rec.get('recipient_name'),
+                'recipient_whatsapp': rec['whatsapp_number'],
+                'subject': request.subject,
+                'message': request.message,
+                'status': 'pending',
+                'provider': 'wati',
+                'provider_response': {'note': 'WhatsApp not configured yet.'},
+                'sent_at': now,
+                'created_at': now,
+            })
+
+    # Persist logs
+    if logs:
+        try:
+            _sb_post('notification_logs', logs)
+        except Exception as exc:
+            print(f'[notifications] Failed to write logs: {exc}')
+
+    return {'success': True, 'sent': sent, 'failed': failed, 'logs': logs}
 
 
 if __name__ == '__main__':
