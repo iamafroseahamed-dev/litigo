@@ -1675,83 +1675,83 @@ export default function TodaysListingsPage() {
     const results: CaseDetailsResponse[] = [];
     const errors: string[] = [];
 
-    // ── 1. Try MHC viewstatus first (JSON API, fast, no captcha) ─────────
-    const causeListCaseNum = normalizeText(record.causeList.case_number);
-    if (causeListCaseNum) {
-      setLoadingMessage(`Fetching orders from MHC… (${causeListCaseNum})`);
-      try {
-        const mhcRes = await fetch('/api/mhc/case-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ case_number: causeListCaseNum }),
-        });
-        if (mhcRes.ok) {
-          const mhcData = await mhcRes.json() as CaseDetailsResponse;
-          if (mhcData.success && (mhcData.tables?.length ?? 0) > 0) {
-            results.push(mhcData);
-          }
-        }
-      } catch { /* fall through to eCourts */ }
-    }
-
-    // ── 2. eCourts per CNR (only if MHC returned nothing) ────────────────
-    if (results.length === 0) {
-      async function fetchOneCnr(cnr: string, idx: number): Promise<CaseDetailsResponse | null> {
-        const cacheKey = `case_history_${cnr}`;
+    try {
+      // ── 1. Try MHC viewstatus first (JSON API, fast, no captcha) ─────────
+      const causeListCaseNum = normalizeText(record.causeList.case_number);
+      if (causeListCaseNum) {
+        setLoadingMessage(`Fetching orders from MHC… (${causeListCaseNum})`);
         try {
-          const cached = sessionStorage.getItem(cacheKey);
-          if (cached) {
-            const parsed = JSON.parse(cached) as CaseDetailsResponse;
-            if (parsed.success) return parsed;
-          }
-        } catch { /* ignore */ }
-
-        setLoadingMessage(`Fetching case history ${idx + 1} of ${cnrs.length}… (${cnr})`);
-        try {
-          const res = await fetch('/api/ecourts/case-details', {
+          const mhcRes = await fetch('/api/mhc/case-status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cnr_number: cnr }),
+            body: JSON.stringify({ case_number: causeListCaseNum }),
           });
-          let data: CaseDetailsResponse | null = null;
-          try { data = (await res.json()) as CaseDetailsResponse; } catch { /* ignore */ }
-
-          if (!res.ok) {
-            const reason = data?.message ?? `HTTP ${res.status}`;
-            errors.push(`${cnr}: ${reason}`);
-            return null;
+          if (mhcRes.ok) {
+            const mhcData = await mhcRes.json() as CaseDetailsResponse;
+            if (mhcData.success && (mhcData.tables?.length ?? 0) > 0) {
+              results.push(mhcData);
+            }
           }
-          if (data?.requiresCaptcha) {
-            setDetailsDialogOpen(false);
-            setCaptchaDialogOpen(true);
-            setCaptchaValue('');
-            setCaptchaImage(data.captchaImage ?? null);
-            setCaptchaToken(data.captchaToken ?? null);
-            setCaptchaMessage(data.message ?? 'Captcha required.');
-            return null;
-          }
-          if (!data?.success) {
-            errors.push(`${cnr}: ${data?.message ?? data?.error ?? 'Unknown error'}`);
-            return null;
-          }
-          try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
-          return data;
-        } catch (e) {
-          errors.push(`${cnr}: ${e instanceof Error ? e.message : 'Network error'}`);
-          return null;
-        }
+        } catch { /* fall through to eCourts */ }
       }
 
-      for (let i = 0; i < cnrs.length; i++) {
-        const result = await fetchOneCnr(cnrs[i], i);
-        if (result) results.push(result);
+      // ── 2. eCourts per CNR (only if MHC returned nothing) ────────────────
+      if (results.length === 0) {
+        async function fetchOneCnr(cnr: string, idx: number): Promise<CaseDetailsResponse | null> {
+          const cacheKey = `case_history_${cnr}`;
+          try {
+            const cached = sessionStorage.getItem(cacheKey);
+            if (cached) {
+              const parsed = JSON.parse(cached) as CaseDetailsResponse;
+              if (parsed.success) return parsed;
+            }
+          } catch { /* ignore */ }
+
+          setLoadingMessage(`Fetching case history ${idx + 1} of ${cnrs.length}… (${cnr})`);
+          try {
+            const res = await fetch('/api/ecourts/case-details', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ cnr_number: cnr }),
+            });
+            let data: CaseDetailsResponse | null = null;
+            try { data = (await res.json()) as CaseDetailsResponse; } catch { /* ignore */ }
+
+            if (!res.ok) {
+              errors.push(`${cnr}: ${data?.message ?? `HTTP ${res.status}`}`);
+              return null;
+            }
+            if (data?.requiresCaptcha) {
+              setDetailsDialogOpen(false);
+              setCaptchaDialogOpen(true);
+              setCaptchaValue('');
+              setCaptchaImage(data.captchaImage ?? null);
+              setCaptchaToken(data.captchaToken ?? null);
+              setCaptchaMessage(data.message ?? 'Captcha required.');
+              return null;
+            }
+            if (!data?.success) {
+              errors.push(`${cnr}: ${data?.message ?? data?.error ?? 'Unknown error'}`);
+              return null;
+            }
+            try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
+            return data;
+          } catch (e) {
+            errors.push(`${cnr}: ${e instanceof Error ? e.message : 'Network error'}`);
+            return null;
+          }
+        }
+
+        for (let i = 0; i < cnrs.length; i++) {
+          const result = await fetchOneCnr(cnrs[i], i);
+          if (result) results.push(result);
+        }
       }
 
       if (results.length === 0) {
-        const detail = errors.length > 0
+        setDetailsError(errors.length > 0
           ? `eCourts lookup failed:\n${errors.join('\n')}`
-          : 'Unable to fetch case details. The eCourts server may be slow or unavailable.';
-        setDetailsError(detail);
+          : 'Unable to fetch case details. The eCourts server may be slow or unavailable.');
       } else {
         setCaseDetails(results[0]);
         setCaseDetailsResults(results);
