@@ -267,7 +267,7 @@ function DynamicTable({ table }: { table: CaseDetailsTable }) {
   };
 
   const openPdf = (originalUrl: string) => {
-    const filename = extractFilename(originalUrl);
+    const filename = extractFilename(originalUrl);    
     const viewerUrl = `https://mhc.tn.gov.in/judis/index.php/casestatus/viewpdf/${encodeURIComponent(filename)}`;
     window.open(viewerUrl, '_blank', 'noopener,noreferrer');
   };
@@ -1561,47 +1561,12 @@ export default function TodaysListingsPage() {
     return <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
-  // ── "Details" button → MHC only (uses cause list case number, fast) ─────
+  // ── "Details" button → straight to eCourts case history ─────────────────
   const fetchCaseDetails = useCallback(async (record: MatchedRecord) => {
     setSelectedRecord(record);
     setDetailsDialogOpen(true);
-    setDetailsError(null);
-    setCaseDetails(null);
-    setCaseDetailsResults([]);
-    setMhcResult(null);
-
-    const caseNum = normalizeText(record.causeList.case_number);
-    if (!caseNum) {
-      setDetailsError('No case number available for this record.');
-      return;
-    }
-
-    setDetailsLoading(true);
-    setLoadingMessage(`Fetching orders from MHC… (${caseNum})`);
-    try {
-      const res = await fetch('/api/mhc/case-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ case_number: caseNum }),
-      });
-      const data = await res.json() as MhcStatusResult;
-      if (res.ok && data.success) {
-        setMhcResult(data);
-      } else {
-        setDetailsError(
-          (data as { message?: string }).message ||
-          `MHC returned ${res.status}. Use "Load Case History" below to try eCourts.`,
-        );
-      }
-    } catch (e) {
-      setDetailsError(
-        `Unable to reach MHC: ${e instanceof Error ? e.message : 'Network error'}. ` +
-        'Use "Load Case History" to try eCourts.',
-      );
-    } finally {
-      setDetailsLoading(false);
-    }
-  }, []);
+    await loadEcourtsHistory(record);
+  }, [loadEcourtsHistory]);
 
   // ── "Load Case History" button → eCourts with CNR (slow, needs captcha) ─
   const loadEcourtsHistory = useCallback(async (record: MatchedRecord, captcha?: string, captchaTokenOverride?: string) => {
@@ -2033,32 +1998,10 @@ export default function TodaysListingsPage() {
         )}
       </div>
 
-      {/* MHC Orders Modal (primary — fast path) */}
-      <Dialog open={detailsDialogOpen && !!mhcResult && !detailsLoading} onOpenChange={(v) => { if (!v) { setDetailsDialogOpen(false); setMhcResult(null); } }}>
-        <DialogContent
-          className="flex flex-col gap-0 overflow-hidden p-0"
-          style={{ width: '90vw', maxWidth: '90vw', height: '90vh', maxHeight: '90vh' }}
-        >
-          <DialogHeader className="shrink-0 border-b bg-background px-6 py-4">
-            <DialogTitle className="text-lg">Case Orders — {selectedRecord?.causeList.case_number}</DialogTitle>
-            <DialogDescription className="text-xs">
-              Source: Madras High Court · {mhcResult?.orders?.length ?? 0} order{(mhcResult?.orders?.length ?? 0) !== 1 ? 's' : ''} found
-            </DialogDescription>
-          </DialogHeader>
-          {mhcResult && (
-            <MhcOrderPanel
-              result={mhcResult}
-              onLoadHistory={() => selectedRecord && loadEcourtsHistory(selectedRecord)}
-              loadingHistory={mhcLoading}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* eCourts Case History Modal (secondary — full details) */}
+      {/* Case History Modal */}
       <CaseDetailsModal
-        open={detailsDialogOpen && !mhcResult}
-        onOpenChange={(v) => { if (!v) setDetailsDialogOpen(false); }}
+        open={detailsDialogOpen}
+        onOpenChange={setDetailsDialogOpen}
         loading={detailsLoading}
         loadingMessage={loadingMessage}
         error={detailsError}
