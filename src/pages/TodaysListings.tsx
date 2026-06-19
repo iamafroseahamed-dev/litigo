@@ -44,19 +44,6 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { Case, CaseNotificationRecipient, CauseListNotifStatus, NotificationLog } from '@/types';
 
-// ── MHC order row returned by /api/mhc/case-status ───────────────────────────
-interface MhcOrderRow {
-  casetype_t: string;
-  caseno: string;
-  petname: string;
-  resname: string;
-  juddate: string;
-  jud1: string;
-  filename: string;
-  citno: string;
-  pdf_url: string | null;
-}
-
 interface DailyCauseListRecord {
   id?: string;
   cause_date: string;
