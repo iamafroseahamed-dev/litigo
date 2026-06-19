@@ -29,7 +29,9 @@ ECOURTS_MAIN_URL = f"{ECOURTS_BASE_URL}/hcservices/main.php?v=1"
 ECOURTS_CASE_URL = (
     f"{ECOURTS_BASE_URL}/hcservices/cases_qry/index_qry.php?action_code=showRecords"
 )
-CASE_TYPE_MAPPING: Dict[str, str] = {"WP": "49"}
+# Fallback map used only when the eCourts form does not expose the dropdown.
+# Runtime codes are scraped from the <select> element on first request.
+_CASE_TYPE_FALLBACK: Dict[str, str] = {"WP": "49"}
 REQUEST_TIMEOUT = (10, 50)
 CAPTCHA_TOKEN_TTL = timedelta(minutes=10)
 
@@ -72,6 +74,21 @@ def _captcha_challenge() -> Dict[str, Any]:
     )
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
+
+    # Scrape the case-type <select> dynamically so all case types work.
+    casetype_map: Dict[str, str] = {}
+    ct_select = soup.find("select", attrs={"name": "case_type"})
+    if ct_select:
+        for opt in ct_select.find_all("option"):
+            val = str(opt.get("value") or "").strip()
+            if not val or val == "0":
+                continue
+            text = opt.get_text(strip=True)
+            # Text is e.g. "WA - Writ Appeal" or "WP(MD)" — extract the abbreviation
+            abbr = text.split("-")[0].split("(")[0].strip().upper()
+            if abbr:
+                casetype_map[abbr] = val
+
     img_tag = soup.find("img", id="captcha_image")
     if not img_tag or not img_tag.get("src"):
         raise ValueError("Cannot find captcha image on eCourts page.")
@@ -93,16 +110,19 @@ def _captcha_challenge() -> Dict[str, Any]:
     ]
     token_payload = {
         "cookies": cookies_list,
+        "casetype_map": casetype_map,
         "expires": (datetime.utcnow() + CAPTCHA_TOKEN_TTL).isoformat(),
     }
     token = base64.b64encode(json.dumps(token_payload).encode()).decode("ascii")
     return {
         "captchaToken": token,
         "captchaImage": f"data:{mime};base64,{base64.b64encode(img_r.content).decode('ascii')}",
+        "_casetype_map": casetype_map,  # internal — stripped before sending to client
     }
 
 
-def _session_from_token(token: str) -> requests.Session:
+def _session_from_token(token: str) -> Tuple[requests.Session, Dict[str, str]]:
+    """Decode a captcha token. Returns (session_with_cookies, casetype_map)."""
     try:
         data = json.loads(base64.b64decode(token).decode())
     except Exception:
@@ -124,7 +144,7 @@ def _session_from_token(token: str) -> requests.Session:
                 domain=c.get("domain") or "",
                 path=c.get("path") or "/",
             )
-    return session
+    return session, data.get("casetype_map", {})
 
 
 def _extract_cnr(body: str) -> Optional[str]:
@@ -188,18 +208,12 @@ class handler(BaseHTTPRequestHandler):
             })
 
         case_type, case_no, case_year = parsed
-        code = CASE_TYPE_MAPPING.get(case_type)
-        if not code:
-            return self._json({
-                "success": False,
-                "error": "CASE_TYPE_MAPPING_NOT_FOUND",
-                "parsedCaseType": case_type,
-                "message": f"Case type '{case_type}' is not yet supported for CNR lookup.",
-            })
 
-        def _new_captcha(msg: str) -> None:
+        def _load_captcha(msg: str) -> None:
+            """Load a fresh captcha page and return the challenge (strips internal key)."""
             try:
                 ch = _captcha_challenge()
+                ch.pop("_casetype_map", None)  # internal key, never sent to client
                 self._json({
                     "success": False,
                     "requiresCaptcha": True,
@@ -210,16 +224,49 @@ class handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"success": False, "message": f"Unable to load captcha: {exc}"})
 
-        if not captcha:
-            return _new_captcha("Captcha required to resolve CNR from case number.")
-
+        # ── First call: no token yet ─────────────────────────────────────────
         if not captcha_token:
-            return _new_captcha("Captcha session missing. Please enter the new captcha.")
+            try:
+                ch = _captcha_challenge()
+            except Exception as exc:
+                return self._json({"success": False, "message": f"Unable to load captcha: {exc}"})
+            casetype_map: Dict[str, str] = ch.pop("_casetype_map", {})
+            code = casetype_map.get(case_type) or _CASE_TYPE_FALLBACK.get(case_type)
+            if not code:
+                return self._json({
+                    "success": False,
+                    "error": "CASE_TYPE_MAPPING_NOT_FOUND",
+                    "parsedCaseType": case_type,
+                    "message": (
+                        f"Case type '{case_type}' was not found in the eCourts form. "
+                        "Please verify the case number."
+                    ),
+                })
+            return self._json({
+                "success": False,
+                "requiresCaptcha": True,
+                "message": "Captcha required to resolve CNR from case number.",
+                "caseNumber": case_number,
+                **ch,
+            })
+
+        # ── Second call: captcha + token ─────────────────────────────────────
+        if not captcha:
+            return _load_captcha("Captcha is required.")
 
         try:
-            session = _session_from_token(captcha_token)
+            session, casetype_map = _session_from_token(captcha_token)
         except ValueError:
-            return _new_captcha("Captcha session expired. Please try again.")
+            return _load_captcha("Captcha session expired. Please try again.")
+
+        code = casetype_map.get(case_type) or _CASE_TYPE_FALLBACK.get(case_type)
+        if not code:
+            return self._json({
+                "success": False,
+                "error": "CASE_TYPE_MAPPING_NOT_FOUND",
+                "parsedCaseType": case_type,
+                "message": f"Case type '{case_type}' was not found in the eCourts form.",
+            })
 
         try:
             resp = session.post(
@@ -251,7 +298,7 @@ class handler(BaseHTTPRequestHandler):
             return self._json({"success": False, "message": f"eCourts did not respond: {exc}"})
 
         if _is_bad_captcha(resp.text):
-            return _new_captcha("Invalid captcha. Please try again.")
+            return _load_captcha("Invalid captcha. Please try again.")
 
         cnr = _extract_cnr(resp.text)
         if not cnr:
