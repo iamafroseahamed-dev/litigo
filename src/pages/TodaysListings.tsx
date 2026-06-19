@@ -1605,9 +1605,9 @@ export default function TodaysListingsPage() {
       <div className="space-y-5 p-6">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h1 className="text-xl font-semibold">Today's Listings</h1>
+            <h1 className="text-xl font-semibold">Matched Listings</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Cases listed today in Madras High Court that are being tracked in Litigo.
+              Cases listed in today’s Madras High Court cause list that match your tracked cases.
               {causeDate && !loading && (
                 <span className="ml-1">
                   · {causeDate === new Date().toISOString().split('T')[0] ? "Today's" : 'Latest available'} cause list:

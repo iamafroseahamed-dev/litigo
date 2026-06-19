@@ -348,7 +348,7 @@ export default function DashboardPage() {
     <div className="space-y-6 p-6">
       {/* ── Header ── */}
       <div>
-        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <h1 className="text-xl font-semibold">Executive Dashboard</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">Case portfolio overview · {fmtDate(today)}</p>
       </div>
 
@@ -366,18 +366,18 @@ export default function DashboardPage() {
 
       {/* ── Metric cards ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard title="Total Pending" value={pending.length} icon={Briefcase} colorClass="text-amber-600" loading={loading} />
-        <MetricCard title="Total Disposed" value={disposed.length} icon={CheckCircle2} colorClass="text-emerald-600" loading={loading} />
-        <MetricCard title="Hearings Today" value={hearingsToday.length} icon={CalendarDays} colorClass="text-blue-600" loading={loading} />
-        <MetricCard title="Hearings Tomorrow" value={hearingsTomorrow.length} icon={Clock} colorClass="text-indigo-600" loading={loading} />
-        <MetricCard title="Within 7 Days" value={hearings7.length} icon={Bell} colorClass="text-orange-500" loading={loading} />
+        <MetricCard title="Cases Under Management" value={pending.length} icon={Briefcase} colorClass="text-amber-600" loading={loading} />
+        <MetricCard title="Disposed / Closed" value={disposed.length} icon={CheckCircle2} colorClass="text-emerald-600" loading={loading} />
+        <MetricCard title="Today’s Court Listings" value={hearingsToday.length} icon={CalendarDays} colorClass="text-blue-600" loading={loading} />
+        <MetricCard title="Tomorrow’s Hearings" value={hearingsTomorrow.length} icon={Clock} colorClass="text-indigo-600" loading={loading} />
+        <MetricCard title="Upcoming (7 Days)" value={hearings7.length} icon={Bell} colorClass="text-orange-500" loading={loading} />
         <MetricCard title="Dormant Cases" value={dormant.length} icon={Moon} colorClass="text-red-600" subtitle="Pending, no upcoming date" loading={loading} />
       </div>
 
       {/* ── Notification metrics ── */}
       <div className="grid grid-cols-3 gap-3">
         <MetricCard title="Notifications Sent Today" value={notifStats.sentToday} icon={Send} colorClass="text-emerald-600" loading={loading} />
-        <MetricCard title="Failed Today" value={notifStats.failedToday} icon={BellOff} colorClass="text-red-600" loading={loading} />
+        <MetricCard title="Pending Notifications" value={notifStats.failedToday} icon={BellOff} colorClass="text-red-600" loading={loading} />
         <MetricCard title="Cases Notified Today" value={notifStats.casesNotifiedToday} icon={Bell} colorClass="text-blue-600" loading={loading} />
       </div>
 

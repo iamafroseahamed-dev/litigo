@@ -153,7 +153,7 @@ export default function CauseListPage() {
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h1 className="text-xl font-semibold">Today's Cause List</h1>
+          <h1 className="text-xl font-semibold">Court Cause List</h1>
           {!loading && !error && (
             <p className="mt-0.5 text-sm text-muted-foreground">
               Total Records: {records.length}

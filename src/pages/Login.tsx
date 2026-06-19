@@ -43,14 +43,14 @@ export default function LoginPage() {
             <Scale className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white sm:text-3xl">Litigo</h1>
-          <p className="text-blue-200 text-sm">Never miss a listed case again.</p>
+          <p className="text-blue-200 text-sm">Legal Case Management &amp; Court Intelligence Platform</p>
         </div>
 
         {/* Login Card */}
         <Card className="border-0 shadow-2xl">
           <CardHeader className="pb-4">
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>Enter your organization credentials to access the dashboard</CardDescription>
+          <CardTitle>Sign In to Litigo</CardTitle>
+          <CardDescription>Enter your organisation credentials to access the platform</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">

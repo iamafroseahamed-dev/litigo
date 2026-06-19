@@ -188,7 +188,7 @@ function CaseForm({ initial, onSave, onCancel, saving }: {
       </div>
 
       <div className="space-y-3">
-        <SectionHeader title="Case Details" />
+        <SectionHeader title="Case Profile" />
         <Field label="Subject Matter / Connected Cases">
           <Textarea rows={2} placeholder="Subject matter or connected case numbers" value={form.subject_matter ?? ''} onChange={txt('subject_matter')} />
         </Field>
@@ -793,13 +793,13 @@ export default function CasesPage() {
         <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader className="shrink-0">
             <DialogTitle>{dialogMode === 'add' ? 'Add New Case' : `Edit — ${selected?.case_number}`}</DialogTitle>
-            <DialogDescription>{dialogMode === 'add' ? 'Fill in the case details below.' : 'Update the case information.'}</DialogDescription>
+            <DialogDescription>{dialogMode === 'add' ? 'Complete the case profile below.' : 'Update the case record.'}</DialogDescription>
           </DialogHeader>
           {dialogMode === 'edit' && selected ? (
             <Tabs defaultValue="details" className="flex flex-col flex-1 min-h-0">
               <TabsList className="shrink-0 w-full">
                 <TabsTrigger value="details" className="flex-1 gap-1.5">
-                  <Edit2 className="h-3.5 w-3.5" /> Case Details
+                  <Edit2 className="h-3.5 w-3.5" /> Case Profile
                 </TabsTrigger>
                 <TabsTrigger value="recipients" className="flex-1 gap-1.5">
                   <Users className="h-3.5 w-3.5" /> Notification Recipients
