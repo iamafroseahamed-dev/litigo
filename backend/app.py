@@ -439,6 +439,34 @@ _SB_HEADERS = {
     'Accept': 'application/json',
 }
 _SB_BATCH = 500
+_SB_COLS = (
+    'cause_date,court_name,bench,court_hall,item_number,case_number,'
+    'cnr_number,petitioner,respondent,party_names,judge_name,'
+    'last_hearing_or_stage,counsel_name'
+)
+
+
+def _supabase_fetch_today(cause_date_str: str) -> List[Dict[str, Any]]:
+    """Read today's cause list from Supabase (paginated, fast path)."""
+    all_rows: List[Dict[str, Any]] = []
+    page_size, offset = 1000, 0
+    base = f'{settings.SUPABASE_URL}/rest/v1/daily_cause_list'
+    while True:
+        url = (
+            f'{base}?cause_date=eq.{cause_date_str}'
+            '&court_name=eq.Madras%20High%20Court&bench=eq.Chennai'
+            f'&select={_SB_COLS}'
+            '&order=court_hall.asc,item_number.asc'
+            f'&limit={page_size}&offset={offset}'
+        )
+        resp = requests.get(url, headers=_SB_HEADERS, timeout=30)
+        resp.raise_for_status()
+        page = resp.json() or []
+        all_rows.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return all_rows
 
 
 def _supabase_sync(rows: List[Dict[str, Any]], cause_date_str: str) -> None:
@@ -459,17 +487,31 @@ def _supabase_sync(rows: List[Dict[str, Any]], cause_date_str: str) -> None:
 
 
 @app.get('/api/todays-cause-list')
-def get_todays_cause_list() -> JSONResponse:
+def get_todays_cause_list(refresh: bool = False) -> JSONResponse:
     today = date.today()
     cause_date_str = today.isoformat()
+
+    # ── Fast path: Supabase (skipped when ?refresh=1) ─────────────────────────
+    if not refresh and settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
+        try:
+            cached = _supabase_fetch_today(cause_date_str)
+            if cached:
+                print(f'[cause-list] Supabase hit: {len(cached)} rows for {cause_date_str}')
+                return JSONResponse(
+                    content=cached,
+                    headers={'Cache-Control': 'no-store, no-cache, must-revalidate', 'Pragma': 'no-cache'},
+                )
+            print('[cause-list] Supabase empty — downloading from MHC')
+        except Exception as exc:
+            print(f'[cause-list] Supabase read failed ({exc}) — downloading from MHC')
+
+    # ── Slow path: download from MHC ──────────────────────────────────────────
     date_for_url = today.strftime('%d%m%Y')
     xml_url = MHC_XML_BASE.format(date=date_for_url)
-
-    print(f'[cause-list] Timestamp: {datetime.utcnow().isoformat()}')
     print(f'[cause-list] Downloading XML: {xml_url}')
 
     try:
-        xml_resp = requests.get(xml_url, timeout=(10, 30), verify=False)
+        xml_resp = requests.get(xml_url, timeout=(10, 60), verify=False)
         xml_resp.raise_for_status()
         print(f'[cause-list] XML Download Status: {xml_resp.status_code}')
     except requests.RequestException as exc:
@@ -481,37 +523,29 @@ def get_todays_cause_list() -> JSONResponse:
     try:
         parsed_rows = _parse_mhc_xml(xml_resp.content, cause_date_str, xml_url)
     except ET.ParseError as exc:
-        # MHC likely returned an HTML error page instead of XML (holiday / not yet published)
         preview = xml_resp.content[:200].decode('utf-8', errors='replace')
         raise HTTPException(
             status_code=502,
             detail=f'Cause list XML is malformed or not yet published (ParseError: {exc}). Response preview: {preview}',
         ) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f'Failed to parse cause list XML: {exc}',
-        ) from exc
+        raise HTTPException(status_code=502, detail=f'Failed to parse cause list XML: {exc}') from exc
 
     if not parsed_rows:
         raise HTTPException(status_code=404, detail="No records found in today's cause list XML.")
 
-    print(f'[cause-list] Parsed Rows: {len(parsed_rows)}')
+    print(f'[cause-list] Parsed {len(parsed_rows)} rows — syncing to Supabase')
 
-    # Write to Supabase so Vercel can serve from there (fast path)
-    try:
-        _supabase_sync(parsed_rows, cause_date_str)
-    except Exception as exc:
-        print(f'[cause-list] Supabase sync failed (non-fatal): {exc}')
-
-    print(f'[cause-list] Returned Rows: {len(parsed_rows)}')
+    # Write to Supabase so subsequent requests are fast
+    if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
+        try:
+            _supabase_sync(parsed_rows, cause_date_str)
+        except Exception as exc:
+            print(f'[cause-list] Supabase sync failed (non-fatal): {exc}')
 
     return JSONResponse(
         content=parsed_rows,
-        headers={
-            'Cache-Control': 'no-store, no-cache, must-revalidate',
-            'Pragma': 'no-cache',
-        },
+        headers={'Cache-Control': 'no-store, no-cache, must-revalidate', 'Pragma': 'no-cache'},
     )
 
 
