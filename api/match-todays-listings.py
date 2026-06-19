@@ -576,12 +576,14 @@ def _send_email(to: str, subject: str, body: str) -> Dict[str, Any]:
 
 
 def _send_sms_twilio(to: str, body: str) -> Dict[str, Any]:
-    """Phase 2 stub — returns not_configured until Twilio credentials are set."""
+    """Send SMS via Twilio. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+    and TWILIO_SMS_FROM (a purchased Twilio number, e.g. +15005550006).
+    Trial accounts can only send to verified recipient numbers."""
     sid   = os.environ.get('TWILIO_ACCOUNT_SID', '')
     token = os.environ.get('TWILIO_AUTH_TOKEN', '')
     from_ = os.environ.get('TWILIO_SMS_FROM', '')
     if not sid or not token or not from_:
-        return {'ok': False, 'error': 'Twilio SMS not configured'}
+        return {'ok': False, 'error': 'TWILIO_SMS_FROM not configured'}
     try:
         r = requests.post(
             f'https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json',
@@ -600,12 +602,13 @@ def _send_sms_twilio(to: str, body: str) -> Dict[str, Any]:
 
 
 def _send_whatsapp_twilio(to: str, body: str) -> Dict[str, Any]:
-    """Phase 3 stub — returns not_configured until Twilio credentials are set."""
+    """Send WhatsApp via Twilio. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+    and TWILIO_WHATSAPP_FROM (e.g. whatsapp:+14155238886 for the sandbox)."""
     sid   = os.environ.get('TWILIO_ACCOUNT_SID', '')
     token = os.environ.get('TWILIO_AUTH_TOKEN', '')
     from_ = os.environ.get('TWILIO_WHATSAPP_FROM', '')
     if not sid or not token or not from_:
-        return {'ok': False, 'error': 'Twilio WhatsApp not configured'}
+        return {'ok': False, 'error': 'TWILIO_WHATSAPP_FROM not configured'}
     wa_to = f'whatsapp:{to}' if not to.startswith('whatsapp:') else to
     try:
         r = requests.post(
