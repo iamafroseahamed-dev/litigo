@@ -1145,25 +1145,48 @@ export default function TodaysListingsPage() {
     setError(null);
 
     try {
-      // Step 1+2: Fetch cause list AND user cases in parallel
-      const url = forceRefresh
-        ? `/api/todays-cause-list?refresh=1&t=${Date.now()}`
-        : `/api/todays-cause-list?t=${Date.now()}`;
+      // Step 1+2: Fetch cause list from Supabase AND user cases in parallel
+      const fetchCauseList = async (): Promise<DailyCauseListRecord[]> => {
+        // Find most recent available cause_date
+        const { data: dateRow, error: dateErr } = await supabase
+          .from('daily_cause_list')
+          .select('cause_date')
+          .eq('court_name', 'Madras High Court')
+          .eq('bench', 'Chennai')
+          .order('cause_date', { ascending: false })
+          .limit(1)
+          .single();
 
-      const [causeListResp, casesResult] = await Promise.all([
-        fetch(url, {
-          cache: 'no-store',
-          headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
-        }),
+        if (dateErr || !dateRow) throw new Error('No cause list data available in the database.');
+
+        const causeDate = (dateRow as { cause_date: string }).cause_date;
+        const COLS = 'cause_date,court_name,bench,court_hall,item_number,case_number,cnr_number,petitioner,respondent,party_names,judge_name,last_hearing_or_stage,counsel_name';
+        const PAGE = 1000;
+        const allRows: DailyCauseListRecord[] = [];
+        let offset = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from('daily_cause_list')
+            .select(COLS)
+            .eq('cause_date', causeDate)
+            .eq('court_name', 'Madras High Court')
+            .eq('bench', 'Chennai')
+            .order('court_hall', { ascending: true })
+            .order('item_number', { ascending: true })
+            .range(offset, offset + PAGE - 1);
+          if (error) throw new Error(error.message);
+          if (!data || data.length === 0) break;
+          allRows.push(...(data as DailyCauseListRecord[]));
+          if (data.length < PAGE) break;
+          offset += PAGE;
+        }
+        return allRows;
+      };
+
+      const [causeListRows, casesResult] = await Promise.all([
+        fetchCauseList(),
         supabase.from('cases').select('*').order('created_at', { ascending: false }),
       ]);
-
-      if (!causeListResp.ok) {
-        let detail = `HTTP ${causeListResp.status}`;
-        try { const body = await causeListResp.json(); if (body?.detail) detail = body.detail; } catch { /* ignore */ }
-        throw new Error(`Cause list unavailable: ${detail}`);
-      }
-      const causeListRows: DailyCauseListRecord[] = await causeListResp.json();
 
       if (casesResult.error) throw casesResult.error;
 
