@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
 import requests
-import urllib3
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Suppress SSL warnings without requiring urllib3 as a top-level import
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 MHC_VIEWSTATUS = 'https://mhc.tn.gov.in/judis/index.php/casestatus/viewstatus'
 MHC_VIEWPDF    = 'https://mhc.tn.gov.in/judis/index.php/casestatus/viewpdf'
@@ -36,6 +36,12 @@ def _parse(case_number: str) -> Optional[Tuple[str, str, str]]:
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
+        try:
+            self._handle()
+        except Exception as exc:
+            self._json({'success': False, 'message': f'Unexpected error: {exc}'}, 500)
+
+    def _handle(self) -> None:
         length = int(self.headers.get('Content-Length', 0))
         try:
             body = json.loads(self.rfile.read(length))
@@ -73,7 +79,10 @@ class handler(BaseHTTPRequestHandler):
             resp.raise_for_status()
             data = resp.json()
         except requests.exceptions.Timeout:
-            self._json({'success': False, 'message': 'MHC server timed out.'}, 504)
+            self._json({'success': False, 'message': 'MHC server timed out. This endpoint only works when Litigo is running locally.'}, 504)
+            return
+        except requests.exceptions.ConnectionError as exc:
+            self._json({'success': False, 'message': 'Cannot reach MHC from this server. This endpoint works when running Litigo locally.'}, 503)
             return
         except requests.RequestException as exc:
             self._json({'success': False, 'message': f'MHC unavailable: {exc}'}, 503)
