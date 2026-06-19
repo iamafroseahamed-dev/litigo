@@ -1567,12 +1567,36 @@ export default function TodaysListingsPage() {
     setDetailsError(null);
     setCaseDetails(null);
     setCaseDetailsResults([]);
+    setMhcResult(null);
 
     const cnrs = extractCnrNumbers(record).filter(Boolean);
     const primaryCnr = cnrs[0] ?? '';
     const caseNum =
       normalizeText(record.causeList.case_number) ||
       normalizeText(record.case.case_number);
+
+    // ── Primary path: MHC viewstatus (fast, no captcha, returns PDF link) ─
+    // Only when we have a cause-list case number and no captcha override
+    if (!captcha && caseNum) {
+      setDetailsLoading(true);
+      setLoadingMessage(`Fetching orders from MHC… (${caseNum})`);
+      try {
+        const mhcRes = await fetch('/api/mhc/case-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ case_number: caseNum }),
+        });
+        if (mhcRes.ok) {
+          const mhcData = await mhcRes.json() as MhcStatusResult;
+          if (mhcData.success) {
+            setMhcResult(mhcData);
+            setDetailsLoading(false);
+            return;
+          }
+        }
+      } catch { /* fall through to eCourts */ }
+      setDetailsLoading(false);
+    }
 
     // ── No CNR: captcha flow (case-number search) ──────────────────────────
     if (!primaryCnr && !captcha) {
@@ -1737,6 +1761,15 @@ export default function TodaysListingsPage() {
       setDetailsLoading(false);
     }
   }, []);
+
+  // Load full case history from eCourts (called from MhcOrderPanel "Load History" button)
+  const loadEcourtsHistory = useCallback(async () => {
+    if (!selectedRecord) return;
+    setMhcLoading(true);
+    setMhcResult(null);
+    await fetchCaseDetails(selectedRecord, undefined, undefined);
+    setMhcLoading(false);
+  }, [selectedRecord, fetchCaseDetails]);
 
   const refreshCaptcha = useCallback(async () => {
     if (!selectedRecord) return;
