@@ -637,10 +637,6 @@ def _sync_cases_table(enriched_matches: List[Dict]) -> int:
 # ── Automatic notifications ────────────────────────────────────────────────────
 # Email via MailerSend.  SMS/WhatsApp via Twilio (Phase 2).
 
-# Hardcoded system alert recipient — always receives a copy regardless of the
-# system_notification_recipients table contents.
-SYSTEM_ALERT_EMAIL = 'iamafroseahamed@gmail.com'
-
 MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
 
 
@@ -828,20 +824,10 @@ def _notify_listings(listed_date: str) -> None:
             'active': 'eq.true',
         })
 
-        # Build the final email recipient list:
-        #   - all DB recipients with notify_email=true
-        #   - always include the hardcoded system alert address (deduplicated)
-        db_email_addrs = {
-            (r.get('email') or '').lower()
-            for r in db_recipients
-            if r.get('notify_email') and r.get('email')
-        }
         all_email_to: List[str] = [
             r['email'] for r in db_recipients
             if r.get('notify_email') and r.get('email')
         ]
-        if SYSTEM_ALERT_EMAIL.lower() not in db_email_addrs:
-            all_email_to.append(SYSTEM_ALERT_EMAIL)
 
         now_iso        = datetime.now(timezone.utc).isoformat()
 
