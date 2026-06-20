@@ -39,6 +39,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from bs4 import BeautifulSoup
 
+from notification_service import NotificationService
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
@@ -635,9 +637,9 @@ def _sync_cases_table(enriched_matches: List[Dict]) -> int:
 
 
 # ── Automatic notifications ────────────────────────────────────────────────────
-# Email via MailerSend.  SMS/WhatsApp via Twilio (Phase 2).
+# Email via NotificationService (Resend). SMS/WhatsApp are intentionally empty.
 
-MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
+NOTIFICATION_SERVICE = NotificationService()
 
 
 def _build_email_bulk(matches: List[Dict]) -> Tuple[str, str]:
@@ -842,7 +844,7 @@ def _notify_listings(listed_date: str) -> None:
 
         # ── Email: one send covers all listings ────────────────────────────────
         for to_addr in all_email_to:
-            result = _send_email_mailersend(to_addr, subject, email_body)
+            result = NOTIFICATION_SERVICE.send_email(to_addr, subject, email_body)
             ok     = result.get('ok', False)
             rec    = next(
                 (r for r in db_recipients
@@ -859,7 +861,7 @@ def _notify_listings(listed_date: str) -> None:
                     'subject':            subject,
                     'message':            email_body,
                     'status':             'sent' if ok else 'failed',
-                    'provider':           'mailersend',
+                    'provider':           'resend',
                     'provider_response':  result.get('response'),
                     'error_message':      (
                         result.get('error')

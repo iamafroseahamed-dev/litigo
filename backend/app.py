@@ -3,8 +3,10 @@ from datetime import date, datetime, timedelta
 import json
 import os
 import re
+import sys
 import secrets
 from threading import Lock
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
@@ -36,6 +38,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
+
+from notification_service import NotificationService
+from notification_settings import get_msg91_settings, save_msg91_settings
 
 ECOURTS_BASE_URL = 'https://hcservices.ecourts.gov.in'
 ECOURTS_MAIN_URL = f'{ECOURTS_BASE_URL}/hcservices/main.php?v=1'
@@ -244,6 +253,53 @@ class ExtractPdfTextRequest(BaseModel):
     filename: str
 
 
+class Msg91SettingsRequest(BaseModel):
+    organization_id: str
+    auth_key: Optional[str] = None
+    sender_id: Optional[str] = None
+    whatsapp_template_id: Optional[str] = None
+    whatsapp_flow_id: Optional[str] = None
+
+
+def _normalize_case_number(value: Optional[str]) -> str:
+    if not value:
+        return ''
+    try:
+        import unicodedata
+        value = unicodedata.normalize('NFKC', str(value))
+    except Exception:
+        pass
+    value = value.upper().strip()
+    value = re.sub(r'(?<=[A-Z])\.(?=[A-Z(])', '', value)
+    value = re.sub(r'(?<=\))\.', '', value)
+    value = re.sub(r'\.', ' ', value)
+    value = re.sub(r'\bNO\b', '', value)
+    value = re.sub(r'\bNUMBER\b', '', value)
+    value = re.sub(r'\bOF\b', '/', value)
+    value = re.sub(r'\s+', ' ', value).strip()
+    parts = [part.strip() for part in re.split(r'\s*/\s*|\s+', value) if part.strip()]
+    if len(parts) >= 3:
+        num_idx = next((index for index, part in enumerate(parts) if re.match(r'^\d+$', part)), -1)
+        if num_idx >= 1 and num_idx + 1 < len(parts):
+            case_type = ''.join(parts[:num_idx])
+            case_no = re.sub(r'\D', '', parts[num_idx]).lstrip('0') or '0'
+            case_year = re.sub(r'\D', '', parts[num_idx + 1])
+            if case_type and case_no and re.match(r'^\d{2,4}$', case_year):
+                return f'{case_type}/{case_no}/{case_year}'
+        case_type = parts[0]
+        case_no = re.sub(r'\D', '', parts[1]).lstrip('0') or '0'
+        case_year = re.sub(r'\D', '', parts[2])
+        if case_type and case_no and re.match(r'^\d{2,4}$', case_year):
+            return f'{case_type}/{case_no}/{case_year}'
+    return re.sub(r'[^A-Z0-9]', '', value)
+
+
+def _fetch_all_rows(conn: psycopg.Connection, query: str, params: Tuple[Any, ...]) -> List[Dict[str, Any]]:
+    with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+
 @app.get('/api/matched-listings')
 def get_matched_listings() -> List[Dict[str, Any]]:
     today = date.today().isoformat()
@@ -369,6 +425,267 @@ def get_matched_listings() -> List[Dict[str, Any]]:
         return matched_rows
     except requests.RequestException as exc:
         raise HTTPException(status_code=500, detail='Unable to load matched listings.') from exc
+
+
+@app.get('/api/notification-settings/msg91')
+def read_msg91_settings(organization_id: str) -> Dict[str, Any]:
+    try:
+        return get_msg91_settings(organization_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f'Unable to load MSG91 settings: {exc}') from exc
+
+
+@app.post('/api/notification-settings/msg91')
+def write_msg91_settings(request: Msg91SettingsRequest) -> Dict[str, Any]:
+    try:
+        return save_msg91_settings(request.organization_id, request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f'Unable to save MSG91 settings: {exc}') from exc
+
+
+@app.post('/api/match-todays-listings')
+def refresh_matched_listings() -> JSONResponse:
+    today = date.today().isoformat()
+    query_latest_sql = '''
+        SELECT MAX(cause_date) AS cause_date
+        FROM daily_cause_list
+        WHERE cause_date <= (%s::date + INTERVAL '7 days')
+          AND court_name = 'Madras High Court'
+          AND bench = 'Chennai'
+    '''
+    query_cause_sql = '''
+        SELECT id, cause_date, court_hall, item_number, cnr_number, case_number,
+               petitioner, respondent, judge_name, last_hearing_or_stage
+        FROM daily_cause_list
+        WHERE cause_date = %s
+          AND court_name = 'Madras High Court'
+          AND bench = 'Chennai'
+        ORDER BY court_hall ASC, item_number ASC
+    '''
+    query_cases_sql = '''
+        SELECT id, organization_id, cnr_number, case_number
+        FROM cases
+        WHERE active = TRUE
+    '''
+
+    insert_sql = '''
+        INSERT INTO today_matched_listings (
+            listed_date, match_date, organization_id, case_id, daily_cause_list_id,
+            case_number, cnr_number, court_hall, item_number, judge_name,
+            stage, petitioner, respondent, match_type, match_status
+        ) VALUES (
+            %(listed_date)s, %(match_date)s, %(organization_id)s, %(case_id)s, %(daily_cause_list_id)s,
+            %(case_number)s, %(cnr_number)s, %(court_hall)s, %(item_number)s, %(judge_name)s,
+            %(stage)s, %(petitioner)s, %(respondent)s, %(match_type)s, %(match_status)s
+        )
+        ON CONFLICT (listed_date, case_id, daily_cause_list_id)
+        DO UPDATE SET
+            organization_id = EXCLUDED.organization_id,
+            case_number = EXCLUDED.case_number,
+            cnr_number = EXCLUDED.cnr_number,
+            court_hall = EXCLUDED.court_hall,
+            item_number = EXCLUDED.item_number,
+            judge_name = EXCLUDED.judge_name,
+            stage = EXCLUDED.stage,
+            petitioner = EXCLUDED.petitioner,
+            respondent = EXCLUDED.respondent,
+            match_type = EXCLUDED.match_type,
+            match_status = EXCLUDED.match_status,
+            match_date = EXCLUDED.match_date
+    '''
+
+    def _build_matches(cause_rows: List[Dict[str, Any]], case_rows: List[Dict[str, Any]], latest_date: str) -> List[Dict[str, Any]]:
+        case_by_cnr: Dict[str, Dict[str, Any]] = {}
+        case_by_norm: Dict[str, Dict[str, Any]] = {}
+        for case_row in case_rows:
+            cnr = str(case_row.get('cnr_number') or '').strip().upper()
+            case_number = str(case_row.get('case_number') or '').strip().upper()
+            if cnr:
+                case_by_cnr[cnr] = case_row
+            norm_case_number = _normalize_case_number(case_number)
+            if norm_case_number:
+                case_by_norm.setdefault(norm_case_number, case_row)
+
+        matched_rows: List[Dict[str, Any]] = []
+        seen: Set[Tuple[str, str]] = set()
+        for cause_row in cause_rows:
+            cnr_raw = str(cause_row.get('cnr_number') or '').strip()
+            case_raw = str(cause_row.get('case_number') or '').strip()
+            matched_case = None
+            match_type = 'case_number'
+
+            if cnr_raw and cnr_raw.upper() in case_by_cnr:
+                matched_case = case_by_cnr[cnr_raw.upper()]
+                match_type = 'cnr'
+            else:
+                norm_case = _normalize_case_number(case_raw)
+                if norm_case:
+                    matched_case = case_by_norm.get(norm_case)
+
+            if not matched_case:
+                continue
+
+            pair = (str(matched_case['id']), str(cause_row['id']))
+            if pair in seen:
+                continue
+            seen.add(pair)
+
+            matched_rows.append({
+                'listed_date': latest_date,
+                'match_date': latest_date,
+                'organization_id': matched_case.get('organization_id'),
+                'case_id': matched_case['id'],
+                'daily_cause_list_id': cause_row['id'],
+                'case_number': cause_row.get('case_number'),
+                'cnr_number': cnr_raw or None,
+                'court_hall': cause_row.get('court_hall'),
+                'item_number': str(cause_row.get('item_number')).strip() if cause_row.get('item_number') is not None else None,
+                'judge_name': cause_row.get('judge_name'),
+                'stage': cause_row.get('last_hearing_or_stage'),
+                'petitioner': cause_row.get('petitioner'),
+                'respondent': cause_row.get('respondent'),
+                'match_type': match_type,
+                'match_status': 'matched',
+            })
+
+        return matched_rows
+
+    try:
+        if settings.DATABASE_URL:
+            with psycopg.connect(settings.DATABASE_URL, autocommit=True) as conn:
+                with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                    cur.execute(query_latest_sql, (today,))
+                    latest_row = cur.fetchone()
+                    latest_date = latest_row['cause_date'] if latest_row and latest_row.get('cause_date') else None
+                    if not latest_date:
+                        return JSONResponse(content={
+                            'success': True,
+                            'match_date': today,
+                            'cause_list_count': 0,
+                            'cases_count': 0,
+                            'matched_count': 0,
+                            'message': 'No cause list data available to refresh.',
+                        })
+
+                    cur.execute(query_cause_sql, (latest_date,))
+                    cause_rows = cur.fetchall()
+                    cur.execute(query_cases_sql)
+                    case_rows = cur.fetchall()
+
+                matched_rows = _build_matches(cause_rows, case_rows, latest_date)
+                if matched_rows:
+                    with conn.cursor() as cur:
+                        cur.executemany(insert_sql, matched_rows)
+
+                return JSONResponse(content={
+                    'success': True,
+                    'match_date': latest_date,
+                    'cause_list_count': len(cause_rows),
+                    'cases_count': len(case_rows),
+                    'matched_count': len(matched_rows),
+                    'message': (
+                        f'Refreshed {len(matched_rows)} matched listings for {latest_date}.'
+                        if matched_rows else 'No matching listings found to refresh.'
+                    ),
+                })
+
+        if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail='SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured to refresh matched listings.',
+            )
+
+        sb_headers = {
+            'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+        }
+
+        latest_resp = requests.get(
+            f'{settings.SUPABASE_URL}/rest/v1/daily_cause_list',
+            headers=sb_headers,
+            params={
+                'select': 'cause_date',
+                'cause_date': f'lte.{today}',
+                'order': 'cause_date.desc',
+                'limit': '1',
+            },
+            timeout=settings.MHC_TIMEOUT_SECONDS,
+        )
+        latest_resp.raise_for_status()
+        latest_rows = latest_resp.json() or []
+        latest_date = latest_rows[0]['cause_date'] if latest_rows else None
+        if not latest_date:
+            return JSONResponse(content={
+                'success': True,
+                'match_date': today,
+                'cause_list_count': 0,
+                'cases_count': 0,
+                'matched_count': 0,
+                'message': 'No cause list data available to refresh.',
+            })
+
+        def _sb_get_all(table: str, params: Dict[str, str]) -> List[Dict[str, Any]]:
+            rows: List[Dict[str, Any]] = []
+            offset = 0
+            page_size = 1000
+            while True:
+                resp = requests.get(
+                    f'{settings.SUPABASE_URL}/rest/v1/{table}',
+                    headers={**sb_headers, 'Range-Unit': 'items', 'Range': f'{offset}-{offset + page_size - 1}'},
+                    params=params,
+                    timeout=settings.MHC_TIMEOUT_SECONDS,
+                )
+                resp.raise_for_status()
+                chunk = resp.json() or []
+                if not isinstance(chunk, list) or not chunk:
+                    break
+                rows.extend(chunk)
+                if len(chunk) < page_size:
+                    break
+                offset += page_size
+            return rows
+
+        cause_rows = _sb_get_all('daily_cause_list', {
+            'select': 'id,cause_date,court_hall,item_number,cnr_number,case_number,petitioner,respondent,judge_name,last_hearing_or_stage',
+            'cause_date': f'eq.{latest_date}',
+            'court_name': 'eq.Madras%20High%20Court',
+            'bench': 'eq.Chennai',
+            'order': 'court_hall.asc,item_number.asc',
+        })
+        case_rows = _sb_get_all('cases', {
+            'select': 'id,organization_id,cnr_number,case_number',
+            'active': 'eq.true',
+        })
+
+        matched_rows = _build_matches(cause_rows, case_rows, latest_date)
+        if matched_rows:
+            insert_resp = requests.post(
+                f'{settings.SUPABASE_URL}/rest/v1/today_matched_listings',
+                headers={**sb_headers, 'Prefer': 'resolution=merge-duplicates,return=minimal'},
+                params={'on_conflict': 'listed_date,case_id,daily_cause_list_id'},
+                json=matched_rows,
+                timeout=settings.MHC_TIMEOUT_SECONDS,
+            )
+            insert_resp.raise_for_status()
+
+        return JSONResponse(content={
+            'success': True,
+            'match_date': latest_date,
+            'cause_list_count': len(cause_rows),
+            'cases_count': len(case_rows),
+            'matched_count': len(matched_rows),
+            'message': (
+                f'Refreshed {len(matched_rows)} matched listings for {latest_date}.'
+                if matched_rows else 'No matching listings found to refresh.'
+            ),
+        })
+
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f'Unable to refresh matched listings: {exc}') from exc
 
 
 _SB_HEADERS = {
@@ -1784,6 +2101,8 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
     if not request.recipients:
         raise HTTPException(status_code=400, detail='No recipients specified.')
 
+    notification_service = NotificationService()
+
     # Load recipient details from Supabase
     recipient_ids = [r.recipient_id for r in request.recipients]
     id_filter = ','.join(f'"{rid}"' for rid in recipient_ids)
@@ -1805,7 +2124,7 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
 
         # ── Email ──────────────────────────────────────────────────────────────
         if p.send_email and rec.get('email'):
-            result = _send_email_resend(rec['email'], request.subject, request.message)
+            result = notification_service.send_email(rec['email'], request.subject, request.message)
             status = 'sent' if result['ok'] else 'failed'
             if result['ok']:
                 sent += 1
@@ -1830,6 +2149,7 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
 
         # ── SMS (stub) ─────────────────────────────────────────────────────────
         if p.send_sms and rec.get('mobile_number'):
+            result = notification_service.send_sms(rec['mobile_number'], request.message)
             logs.append({
                 'case_id': request.case_id,
                 'cause_date': request.cause_date,
@@ -1841,13 +2161,14 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
                 'message': request.message,
                 'status': 'pending',
                 'provider': 'msg91',
-                'provider_response': {'note': 'SMS not configured yet.'},
+                'provider_response': result,
                 'sent_at': now,
                 'created_at': now,
             })
 
         # ── WhatsApp (stub) ────────────────────────────────────────────────────
         if p.send_whatsapp and rec.get('whatsapp_number'):
+            result = notification_service.send_whatsapp(rec['whatsapp_number'], request.message)
             logs.append({
                 'case_id': request.case_id,
                 'cause_date': request.cause_date,
@@ -1858,8 +2179,8 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
                 'subject': request.subject,
                 'message': request.message,
                 'status': 'pending',
-                'provider': 'wati',
-                'provider_response': {'note': 'WhatsApp not configured yet.'},
+                'provider': 'msg91',
+                'provider_response': result,
                 'sent_at': now,
                 'created_at': now,
             })

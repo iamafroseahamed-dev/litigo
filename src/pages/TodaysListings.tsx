@@ -171,17 +171,20 @@ export default function TodaysListingsPage() {
     setIsRefreshing(true);
     try {
       const res  = await fetch('/api/match-todays-listings', { method: 'POST' });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || `Refresh failed with status ${res.status}`);
+      }
       setListedDateFrom(defaultDate);
       setListedDateTo(defaultDate);
       await fetchData();
       toast.success(
-        data.matched_count != null
+        data?.matched_count != null
           ? `${data.matched_count} records matched, ${data.synced_cases_count ?? 0} cases synced for ${data.match_date ?? defaultDate}.`
           : 'Listings refreshed.',
       );
-    } catch {
-      toast.error('Unable to refresh listings. Please try again.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to refresh listings. Please try again.');
     } finally {
       setIsRefreshing(false);
     }
