@@ -55,6 +55,27 @@ function normalizeCaseNumber(value: string | null | undefined) {
   return normalized.replace(/[^A-Z0-9]/g, '');
 }
 
+function parseHearingHistory(raw: unknown): HearingEntry[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is HearingEntry =>
+      item !== null && typeof item === 'object' && 'date' in item && typeof (item as any).date === 'string'
+    );
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is HearingEntry =>
+          item !== null && typeof item === 'object' && 'date' in item && typeof (item as any).date === 'string'
+        );
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 type SortField = 'listed_date' | 'court_hall' | 'item_number' | 'case_number' | 'next_hearing_date';
 type SortDir   = 'asc' | 'desc';
 
@@ -113,9 +134,12 @@ export default function TodaysListingsPage() {
   const [sortDir,   setSortDir  ] = useState<SortDir>('asc');
   const [page, setPage]           = useState(1);
 
-  async function authHeaders() {
+  async function authHeaders(): Promise<Record<string, string>> {
     const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    if (session?.access_token) {
+      return { Authorization: `Bearer ${session.access_token}` };
+    }
+    return {};
   }
 
   const refreshListingsLocally = useCallback(async () => {
@@ -268,10 +292,14 @@ export default function TodaysListingsPage() {
 
       if (sbErr) throw sbErr;
       const rows = (data ?? []) as TodayMatchedListing[];
-      setListings(rows);
+      const normalizedRows = rows.map(row => ({
+        ...row,
+        hearing_history: parseHearingHistory(row.hearing_history),
+      }));
+      setListings(normalizedRows);
 
       // Listing-history counts
-      if (rows.length > 0) {
+      if (normalizedRows.length > 0) {
         const caseIds = [...new Set(rows.map(r => r.case_id).filter(Boolean))];
         const { data: histData } = await supabase
           .from('today_matched_listings')
@@ -542,6 +570,7 @@ export default function TodaysListingsPage() {
                     Latest Hearing <SortIcon field="next_hearing_date" />
                   </TableHead>
                   <TableHead className="whitespace-nowrap">Next Hearing</TableHead>
+                  <TableHead className="whitespace-nowrap">Timeline</TableHead>
                   <TableHead className="whitespace-nowrap">Case Status</TableHead>
                   <TableHead className="whitespace-nowrap">Sensitivity</TableHead>
                   <TableHead className="whitespace-nowrap">CLA Party</TableHead>
@@ -560,9 +589,7 @@ export default function TodaysListingsPage() {
                 ) : (
                   paginated.flatMap(record => {
                     const isExpanded = expandedRows.has(record.id);
-                    const hearings: HearingEntry[] = Array.isArray(record.hearing_history)
-                      ? record.hearing_history
-                      : [];
+                    const hearings: HearingEntry[] = parseHearingHistory(record.hearing_history);
                     const hist = listingHistoryMap.get(record.case_id);
 
                     return [
@@ -636,6 +663,14 @@ export default function TodaysListingsPage() {
                         <TableCell className="whitespace-nowrap">
                           {record.next_hearing_date ? fmtDate(record.next_hearing_date) : '\u2014'}
                         </TableCell>
+                        <TableCell className="max-w-[140px] whitespace-nowrap text-xs">
+                          {hearings.length > 0 ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span>{hearings.length} event{hearings.length !== 1 ? 's' : ''}</span>
+                              {hearings[0]?.stage && <span className="text-muted-foreground truncate">{hearings[0].stage}</span>}
+                            </div>
+                          ) : '—'}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
                           {record.latest_case_status ?? record.case?.case_status ?? '\u2014'}
                         </TableCell>
@@ -657,7 +692,7 @@ export default function TodaysListingsPage() {
                       isExpanded && (
                         <TableRow key={`${record.id}-exp`}
                           className="bg-muted/10 hover:bg-muted/10">
-                          <TableCell colSpan={15} className="p-0">
+                          <TableCell colSpan={16} className="p-0">
                             <div className="px-10 py-4 border-t">
                               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
                                 Case Timeline & Hearing History
