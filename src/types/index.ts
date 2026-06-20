@@ -103,32 +103,10 @@ export interface CauseListMatch {
   cause_list?: CauseList;
 }
 
-export type NotificationType = 'whatsapp' | 'sms' | 'email';
-export type NotificationStatus = 'sent' | 'failed' | 'pending';
-
-export interface Notification {
+// ── System Notification Recipients ──────────────────────────────────────────
+export interface SystemNotificationRecipient {
   id: string;
-  organization_id: string;
-  case_id: string;
-  cause_list_match_id: string;
-  notification_type: NotificationType;
-  recipient: string;
-  message: string;
-  sent_time?: string;
-  status: NotificationStatus;
-  response?: string;
-  retry_count: number;
-  created_at: string;
-  case?: Case;
-}
-
-// ── Notification Recipients (per case) ────────────────────────────────────────
-export interface CaseNotificationRecipient {
-  id: string;
-  organization_id: string;
-  case_id: string;
-  recipient_name: string;
-  recipient_role: string | null;
+  name: string;
   email: string | null;
   mobile_number: string | null;
   whatsapp_number: string | null;
@@ -140,25 +118,33 @@ export interface CaseNotificationRecipient {
   updated_at: string;
 }
 
-// ── Notification Log ──────────────────────────────────────────────────────────
-export interface NotificationLog {
+// ── Notification Delivery Log ─────────────────────────────────────────────────
+export interface NotificationDeliveryLog {
   id: string;
-  organization_id: string | null;
-  case_id: string | null;
-  cause_list_id: string | null;
-  cause_date: string | null;
-  notification_type: string | null;
+  matched_listing_id: string | null;
+  recipient_id: string | null;
   recipient_name: string | null;
-  recipient_role: string | null;
-  recipient_email: string | null;
-  recipient_mobile: string | null;
-  recipient_whatsapp: string | null;
+  channel: string;                  // 'email' | 'sms' | 'whatsapp'
+  recipient_address: string | null;
   subject: string | null;
   message: string | null;
-  status: string | null; // 'sent' | 'failed' | 'pending'
+  status: string;                   // 'sent' | 'failed' | 'pending'
   provider: string | null;
   provider_response: Record<string, unknown> | null;
+  error_message: string | null;
   sent_at: string | null;
+  created_at: string;
+}
+
+// ── Hearing Reminder Log ──────────────────────────────────────────────────────
+export interface HearingReminderLog {
+  id: string;
+  case_id: string | null;
+  organization_id: string | null;
+  reminded_at: string;
+  reminder_type: string | null;     // 'email' | 'sms' | 'whatsapp'
+  status: string | null;            // 'sent' | 'failed'
+  notes: string | null;
   created_at: string;
 }
 
@@ -224,17 +210,6 @@ export interface TodayMatchedListing {
   updated_at: string;
   // Joined via Supabase select('*, case:cases(*)')
   case?: Case;
-}
-
-export interface NotificationProvider {
-  id: string;
-  organization_id: string;
-  provider_type: string; // 'email' | 'sms' | 'whatsapp'
-  provider_name: string;
-  config: Record<string, unknown>;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface UploadedFile {

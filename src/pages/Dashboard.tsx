@@ -1,16 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { sessionCache } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -18,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Briefcase, CheckCircle2, Clock, AlertTriangle, Moon, CalendarDays, Bell, Send, BellOff,
 } from 'lucide-react';
-import type { Case, CaseNotificationRecipient } from '@/types';
+import type { Case } from '@/types';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -112,157 +105,6 @@ function MiniBar({ label, pendingCount, disposedCount, maxVal }: {
   );
 }
 
-// ─── Notification Modal ───────────────────────────────────────────────────────
-
-interface RecipientSelection {
-  recipient: CaseNotificationRecipient;
-  sendEmail: boolean;
-}
-
-function NotifyModal({ open, onClose, caseItem }: {
-  open: boolean; onClose: () => void; caseItem: Case | null;
-}) {
-  const [recipients, setRecipients] = useState<CaseNotificationRecipient[]>([]);
-  const [selections, setSelections] = useState<RecipientSelection[]>([]);
-  const [rLoading, setRLoading] = useState(false);
-  const [subject, setSubject] = useState('');
-  const [message, setMessage] = useState('');
-  const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  useEffect(() => {
-    if (!caseItem || !open) return;
-    setResult(null);
-    setRLoading(true);
-    setSubject(`Court Hearing Reminder — ${caseItem.case_number}`);
-    setMessage(
-      `Dear Recipient,\n\nThis is a reminder that the following matter is scheduled for hearing.\n\n` +
-      `Case Number: ${caseItem.case_number}\n` +
-      `Court: ${caseItem.court_name ?? '—'}\n` +
-      `Next Hearing Date: ${fmtDate(caseItem.next_hearing_date)}\n` +
-      `Petitioner: ${caseItem.petitioner ?? '—'}\n` +
-      `Respondent: ${caseItem.respondent ?? '—'}\n` +
-      `Advocate: ${caseItem.advocate_name ?? '—'}\n\n` +
-      `Please take necessary action.\n\nRegards,\nLitigo`
-    );
-    (async () => {
-      const { data } = await supabase
-        .from('case_notification_recipients')
-        .select('*')
-        .eq('case_id', caseItem.id)
-        .eq('active', true)
-        .order('created_at');
-      const recs = (data ?? []) as CaseNotificationRecipient[];
-      setRecipients(recs);
-      setSelections(recs.map(r => ({ recipient: r, sendEmail: r.notify_email && !!r.email })));
-      setRLoading(false);
-    })();
-  }, [caseItem, open]);
-
-  async function handleSend() {
-    if (!caseItem) return;
-    setSending(true);
-    setResult(null);
-    const payload = {
-      case_id: caseItem.id,
-      cause_date: null,
-      subject,
-      message,
-      recipients: selections
-        .filter(s => s.sendEmail)
-        .map(s => ({ recipient_id: s.recipient.id, send_email: true, send_sms: false, send_whatsapp: false })),
-    };
-    if (payload.recipients.length === 0) {
-      setResult({ ok: false, msg: 'Select at least one email recipient.' });
-      setSending(false);
-      return;
-    }
-    try {
-      const resp = await fetch('/api/notifications/send-case-alert', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      });
-      const data = await resp.json();
-      if (resp.ok) {
-        setResult({ ok: true, msg: `Sent: ${data.sent ?? 0}, Failed: ${data.failed ?? 0}.` });
-      } else {
-        setResult({ ok: false, msg: data.detail ?? 'Failed to send notifications.' });
-      }
-    } catch (e) {
-      setResult({ ok: false, msg: e instanceof Error ? e.message : 'Network error.' });
-    } finally { setSending(false); }
-  }
-
-  if (!caseItem) return null;
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Bell className="h-4 w-4" /> Notify — {caseItem.case_number}
-          </DialogTitle>
-          <DialogDescription>Send a hearing reminder to configured recipients.</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 text-sm">
-          {/* Recipients */}
-          <div className="space-y-2">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recipients</Label>
-            {rLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
-            {!rLoading && recipients.length === 0 && (
-              <p className="text-xs text-muted-foreground rounded-md border border-dashed p-3 text-center">
-                No active notification recipients configured. Add them in the Cases page → Edit → Notification Recipients.
-              </p>
-            )}
-            {selections.map((sel, i) => (
-              <label key={sel.recipient.id} className="flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 hover:bg-muted/30">
-                <Switch
-                  checked={sel.sendEmail}
-                  onCheckedChange={() => setSelections(prev => prev.map((s, j) => j === i ? { ...s, sendEmail: !s.sendEmail } : s))}
-                  className="scale-75"
-                />
-                <div className="flex-1">
-                  <p className="font-medium text-sm">{sel.recipient.recipient_name}</p>
-                  {sel.recipient.recipient_role && <p className="text-xs text-muted-foreground">{sel.recipient.recipient_role}</p>}
-                </div>
-                {sel.recipient.email && <span className="text-xs text-muted-foreground">{sel.recipient.email}</span>}
-              </label>
-            ))}
-          </div>
-
-          {/* Subject */}
-          <div className="space-y-1.5">
-            <Label>Subject</Label>
-            <Input value={subject} onChange={e => setSubject(e.target.value)} />
-          </div>
-
-          {/* Message */}
-          <div className="space-y-1.5">
-            <Label>Message</Label>
-            <Textarea rows={10} value={message} onChange={e => setMessage(e.target.value)} className="font-mono text-xs" />
-          </div>
-
-          {result && (
-            <div className={`rounded-md px-3 py-2 text-sm ${result.ok ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
-              {result.msg}
-            </div>
-          )}
-        </div>
-
-        <DialogFooter className="flex-wrap gap-2 pt-2">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button variant="outline" disabled title="Coming soon">SMS</Button>
-          <Button variant="outline" disabled title="Coming soon">WhatsApp</Button>
-          <Button onClick={handleSend} disabled={sending} className="gap-1.5">
-            <Send className="h-3.5 w-3.5" />
-            {sending ? 'Sending…' : 'Send Email'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 function SensitivityBadge({ v }: { v: string | null }) {
@@ -272,14 +114,16 @@ function SensitivityBadge({ v }: { v: string | null }) {
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const orgId = user?.profile?.organization_id;
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
-  const [notifyCase, setNotifyCase] = useState<Case | null>(null);
   const [notifStats, setNotifStats] = useState({ sentToday: 0, failedToday: 0, casesNotifiedToday: 0 });
 
   useEffect(() => {
+    if (!orgId) return;
     const today = isoToday();
-    const CACHE_KEY = 'litigo_dashboard';
+    const CACHE_KEY = `litigo_dashboard_${orgId}`;
 
     (async () => {
       // Fast path: serve from 15-min session cache
@@ -292,28 +136,35 @@ export default function DashboardPage() {
       }
 
       setLoading(true);
-      const [casesResp, logsResp] = await Promise.all([
-        // Only fetch columns needed for dashboard metrics + upcoming-hearings table
+      const [casesResp, logsResp, notifiedResp] = await Promise.all([
         supabase.from('cases')
           .select('id,case_number,cnr_number,case_status,next_hearing_date,sensitivity,cla_party_status,district,court_name,advocate_name,client_name,petitioner,respondent')
+          .eq('organization_id', orgId)
           .eq('active', true)
           .order('next_hearing_date', { ascending: true, nullsFirst: false }),
-        supabase.from('notification_logs').select('case_id,status')
+        supabase.from('notification_delivery_logs')
+          .select('status')
           .gte('created_at', today).lt('created_at', isoTomorrow()),
+        supabase.from('today_matched_listings')
+          .select('case_id')
+          .eq('organization_id', orgId)
+          .eq('notification_status', 'notified')
+          .eq('listed_date', today),
       ]);
       const fetchedCases = (casesResp.data ?? []) as Case[];
-      const logs = (logsResp.data ?? []) as { case_id: string; status: string }[];
+      const logs = (logsResp.data ?? []) as { status: string }[];
+      const notifiedCases = (notifiedResp.data ?? []) as { case_id: string }[];
       const stats = {
         sentToday: logs.filter(l => l.status === 'sent').length,
         failedToday: logs.filter(l => l.status === 'failed').length,
-        casesNotifiedToday: new Set(logs.filter(l => l.status === 'sent').map(l => l.case_id)).size,
+        casesNotifiedToday: new Set(notifiedCases.map(r => r.case_id)).size,
       };
       sessionCache.set(CACHE_KEY, { cases: fetchedCases, notifStats: stats });
       setCases(fetchedCases);
       setNotifStats(stats);
       setLoading(false);
     })();
-  }, []);
+  }, [orgId]);
 
   const today = isoToday();
   const tomorrow = isoTomorrow();
@@ -500,7 +351,6 @@ export default function DashboardPage() {
                     <TableHead className="whitespace-nowrap">Next Hearing</TableHead>
                     <TableHead className="whitespace-nowrap">Sensitivity</TableHead>
                     <TableHead className="whitespace-nowrap">CLA Status</TableHead>
-                    <TableHead className="whitespace-nowrap">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -522,16 +372,6 @@ export default function DashboardPage() {
                           ? <Badge variant="info">{c.cla_party_status}</Badge>
                           : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 gap-1.5 text-xs"
-                          onClick={() => setNotifyCase(c)}
-                        >
-                          <Bell className="h-3 w-3" /> Notify User
-                        </Button>
-                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -540,9 +380,6 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
-
-      {/* ── Notification modal ── */}
-      <NotifyModal open={!!notifyCase} onClose={() => setNotifyCase(null)} caseItem={notifyCase} />
     </div>
   );
 }

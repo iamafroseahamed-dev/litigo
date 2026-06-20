@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +59,8 @@ function SummaryCard({ title, value }: { title: string; value: number | string }
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function TodaysListingsPage() {
+  const { user } = useAuth();
+  const orgId = user?.profile?.organization_id;
   const [loading, setLoading]             = useState(true);
   const [error,   setError]               = useState<string | null>(null);
   const [listings, setListings]           = useState<TodayMatchedListing[]>([]);
@@ -90,9 +93,11 @@ export default function TodaysListingsPage() {
 
   // ── Initialise date filters to the latest available matched date ──────────────
   useEffect(() => {
+    if (!orgId) return;
     supabase
       .from('today_matched_listings')
       .select('listed_date')
+      .eq('organization_id', orgId)
       .order('listed_date', { ascending: false })
       .limit(1)
       .single()
@@ -103,10 +108,11 @@ export default function TodaysListingsPage() {
         setListedDateTo(d);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [orgId]);
 
   // ── Data loading ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
+    if (!orgId) return;
     setLoading(true);
     setError(null);
     try {
@@ -122,6 +128,7 @@ export default function TodaysListingsPage() {
             cla_party_status, sensitivity, case_status
           )
         `)
+        .eq('organization_id', orgId)
         .gte('listed_date', from)
         .lte('listed_date', to)
         .order('listed_date', { ascending: false })
@@ -138,6 +145,7 @@ export default function TodaysListingsPage() {
         const { data: histData } = await supabase
           .from('today_matched_listings')
           .select('case_id,listed_date')
+          .eq('organization_id', orgId)
           .in('case_id', caseIds);
 
         const hmap = new Map<string, { count: number; firstListed: string; lastListed: string }>();
@@ -160,7 +168,7 @@ export default function TodaysListingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [listedDateFrom, listedDateTo, todayUtc]);
+  }, [listedDateFrom, listedDateTo, todayUtc, orgId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

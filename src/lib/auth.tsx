@@ -7,8 +7,6 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import type { AuthUser, LoginCredentials } from '@/types';
 import { supabase } from '@/lib/supabase';
 
-const LOCAL_SESSION_KEY = 'litigo_local_session';
-
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
@@ -20,80 +18,67 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function fetchProfile(userId: string, email: string): Promise<AuthUser | null> {
+/**
+ * Fetches the profile for a given Supabase auth user.
+ * Throws a descriptive error if the profile does not exist or is inactive.
+ */
+async function fetchProfile(userId: string, email: string): Promise<AuthUser> {
   const { data, error } = await supabase
     .from('profiles')
     .select('*, organization:organizations(*)')
     .eq('user_id', userId)
     .single();
 
-  if (error || !data) return null;
+  if (error || !data) {
+    throw new Error('Your user is not configured. Please contact admin.');
+  }
 
-  const { organization, ...profile } = data as Record<string, unknown>;
+  const profile = data as Record<string, unknown>;
+  if (profile['active'] === false) {
+    throw new Error('Your account has been deactivated. Please contact admin.');
+  }
+
+  const { organization, ...rest } = profile;
   return {
     id: userId,
     email,
-    profile: profile as unknown as AuthUser['profile'],
+    profile: rest as unknown as AuthUser['profile'],
     organization: organization as AuthUser['organization'],
-  };
-}
-
-function buildLocalUser(email: string): AuthUser {
-  const domain = email.split('@')[1]?.split('.')[0] ?? 'firm';
-  const orgName = domain.charAt(0).toUpperCase() + domain.slice(1) + ' Legal';
-  return {
-    id: 'local-' + email,
-    email,
-    profile: {
-      id: 'local-profile',
-      user_id: 'local-' + email,
-      organization_id: 'local-org-' + domain,
-      full_name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      email,
-      role: 'admin',
-      active: true,
-      created_at: new Date().toISOString(),
-    },
-    organization: {
-      id: 'local-org-' + domain,
-      organization_name: orgName,
-      contact_person: '',
-      email,
-      mobile: '',
-      active: true,
-      created_at: new Date().toISOString(),
-    },
   };
 }
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    try {
-      const stored = localStorage.getItem(LOCAL_SESSION_KEY);
-      return stored ? (JSON.parse(stored) as AuthUser) : null;
-    } catch { return null; }
-  });
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
-        localStorage.removeItem(LOCAL_SESSION_KEY);
-        const authUser = await fetchProfile(session.user.id, session.user.email!);
-        if (authUser) setUser(authUser);
+        try {
+          const authUser = await fetchProfile(session.user.id, session.user.email!);
+          setUser(authUser);
+        } catch {
+          // Profile invalid or inactive — sign out
+          await supabase.auth.signOut();
+          setUser(null);
+        }
       }
       setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
-        localStorage.removeItem(LOCAL_SESSION_KEY);
-        const authUser = await fetchProfile(session.user.id, session.user.email!);
-        if (authUser) setUser(authUser);
+      if (event === 'TOKEN_REFRESHED' && session?.user) {
+        try {
+          const authUser = await fetchProfile(session.user.id, session.user.email!);
+          setUser(authUser);
+        } catch {
+          await supabase.auth.signOut();
+          setUser(null);
+        }
       } else if (event === 'SIGNED_OUT') {
-        if (!localStorage.getItem(LOCAL_SESSION_KEY)) setUser(null);
+        setUser(null);
       }
     });
 
@@ -102,19 +87,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async ({ email, password }: LoginCredentials) => {
     if (!email || !password) throw new Error('Email and password are required');
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (!error) return;
-    } catch {
-      // network error — fall through to local auth
-    }
-    const localUser = buildLocalUser(email);
-    localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(localUser));
-    setUser(localUser);
+
+    const { error: authError, data } = await supabase.auth.signInWithPassword({ email, password });
+    if (authError) throw authError;
+
+    // Validate profile — throws if not configured or inactive
+    const authUser = await fetchProfile(data.user.id, data.user.email!);
+    setUser(authUser);
   }, []);
 
   const logout = useCallback(async () => {
-    localStorage.removeItem(LOCAL_SESSION_KEY);
     await supabase.auth.signOut();
     setUser(null);
   }, []);

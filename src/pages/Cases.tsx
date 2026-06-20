@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -238,6 +239,8 @@ function CaseForm({ initial, onSave, onCancel, saving }: {
 
 
 export default function CasesPage() {
+  const { user } = useAuth();
+  const orgId = user?.profile?.organization_id;
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -250,17 +253,18 @@ export default function CasesPage() {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
+    if (!orgId) return;
     setLoading(true);
     setError(null);
     const { data, error: err } = await supabase
       .from('cases')
       .select('*')
-      .eq('court_name', 'Principal Bench of Madras High Court')
+      .eq('organization_id', orgId)
       .order('created_at', { ascending: false });
     if (err) { setError(err.message); setLoading(false); return; }
     setCases(data ?? []);
     setLoading(false);
-  }, []);
+  }, [orgId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -298,7 +302,10 @@ export default function CasesPage() {
     try {
       if (dialogMode === 'add') {
         const { error: err } = await supabase.from('cases').insert({
-          ...data, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          ...data,
+          organization_id: orgId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
         if (err) throw err;
         toast.success('Case added successfully');
