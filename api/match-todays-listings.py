@@ -643,61 +643,68 @@ SYSTEM_ALERT_EMAIL = 'iamafroseahamed@gmail.com'
 MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
 
 
-def _build_email(match: Dict) -> Tuple[str, str]:
-    """Return (subject, plain-text body) for a matched listing alert."""
-    cn    = match.get('case_number') or '\u2014'
-    cnr   = match.get('cnr_number')  or '\u2014'
-    date  = match.get('listed_date') or '\u2014'
-    hall  = match.get('court_hall')  or '\u2014'
-    item  = match.get('item_number') or '\u2014'
-    judge = match.get('judge_name')  or '\u2014'
-    pet   = match.get('petitioner')  or '\u2014'
-    resp  = match.get('respondent')  or '\u2014'
+def _build_email_bulk(matches: List[Dict]) -> Tuple[str, str]:
+    """Return (subject, plain-text body) for all pending listings in one email."""
+    date  = matches[0].get('listed_date') or '\u2014'
+    count = len(matches)
+    subject = f'Litigo Alert - {count} Case{"s" if count > 1 else ""} Listed ({date})'
 
-    subject = 'Litigo Alert - Case Listed Today'
-    body = (
-        f'A tracked case has been listed today.\n\n'
-        f'Case Number: {cn}\n'
-        f'CNR Number: {cnr}\n'
-        f'Listed Date: {date}\n'
-        f'Court Hall: {hall}\n'
-        f'Item Number: {item}\n'
-        f'Judge: {judge}\n'
-        f'Petitioner: {pet}\n'
-        f'Respondent: {resp}\n\n'
-        f'Please login to Litigo for more details.\n\n'
-        f'Regards,\nLitigo'
-    )
-    return subject, body
-
-
-def _build_sms(match: Dict) -> str:
-    cn    = match.get('case_number') or '\u2014'
-    date  = match.get('listed_date') or '\u2014'
-    hall  = match.get('court_hall')  or '\u2014'
-    item  = match.get('item_number') or '\u2014'
-    judge = match.get('judge_name')  or '\u2014'
-    return (
-        f'Litigo Alert\nCase: {cn}\nListed Date: {date}\n'
-        f'Court Hall: {hall}\nItem No: {item}\nJudge: {judge}\n'
-        f'Please login to Litigo for details.'
-    )
+    lines = [
+        f'{count} tracked case{"s have" if count > 1 else " has"} been listed today ({date}).\n',
+        '=' * 60,
+    ]
+    for i, m in enumerate(matches, 1):
+        lines += [
+            f'',
+            f'[{i}]  {m.get("case_number") or "\u2014"}',
+            f'     CNR       : {m.get("cnr_number") or "\u2014"}',
+            f'     Court Hall: {m.get("court_hall") or "\u2014"}  |  Item No: {m.get("item_number") or "\u2014"}',
+            f'     Judge     : {m.get("judge_name") or "\u2014"}',
+            f'     Petitioner: {m.get("petitioner") or "\u2014"}',
+            f'     Respondent: {m.get("respondent") or "\u2014"}',
+        ]
+    lines += [
+        '',
+        '=' * 60,
+        '',
+        'Please login to Litigo for full details.',
+        '',
+        'Regards,',
+        'Litigo',
+    ]
+    return subject, '\n'.join(lines)
 
 
-def _build_whatsapp(match: Dict) -> str:
-    cn    = match.get('case_number') or '\u2014'
-    cnr   = match.get('cnr_number')  or '\u2014'
-    date  = match.get('listed_date') or '\u2014'
-    hall  = match.get('court_hall')  or '\u2014'
-    item  = match.get('item_number') or '\u2014'
-    judge = match.get('judge_name')  or '\u2014'
-    return (
-        f'\u2696\ufe0f Litigo Alert\n\nA tracked case has been listed.\n\n'
-        f'Case Number:\n{cn}\n\nCNR Number:\n{cnr}\n\n'
-        f'Listed Date:\n{date}\n\nCourt Hall:\n{hall}\n\n'
-        f'Item Number:\n{item}\n\nJudge:\n{judge}\n\n'
-        f'Please login to Litigo for details.'
-    )
+def _build_sms_bulk(matches: List[Dict]) -> str:
+    date  = matches[0].get('listed_date') or '\u2014'
+    count = len(matches)
+    lines = [f'Litigo Alert: {count} case{"s" if count > 1 else ""} listed on {date}.']
+    for m in matches:
+        lines.append(
+            f"{m.get('case_number') or '\u2014'} | {m.get('court_hall') or '\u2014'} | Item {m.get('item_number') or '\u2014'}"
+        )
+    lines.append('Login to Litigo for details.')
+    return '\n'.join(lines)
+
+
+def _build_whatsapp_bulk(matches: List[Dict]) -> str:
+    date  = matches[0].get('listed_date') or '\u2014'
+    count = len(matches)
+    lines = [
+        f'\u2696\ufe0f Litigo Alert',
+        f'',
+        f'{count} tracked case{"s" if count > 1 else ""} listed on {date}.',
+        f'',
+    ]
+    for i, m in enumerate(matches, 1):
+        lines += [
+            f'[{i}] {m.get("case_number") or "\u2014"}',
+            f'     Court: {m.get("court_hall") or "\u2014"}, Item {m.get("item_number") or "\u2014"}',
+            f'     CNR: {m.get("cnr_number") or "\u2014"}',
+            f'',
+        ]
+    lines.append('Please login to Litigo for details.')
+    return '\n'.join(lines)
 
 
 def _send_email_mailersend(to: str, subject: str, body: str) -> Dict[str, Any]:
@@ -791,25 +798,25 @@ def _send_whatsapp_twilio(to: str, body: str) -> Dict[str, Any]:
 
 def _notify_listings(listed_date: str) -> None:
     """
-    Send notifications for all today_matched_listings where notification_status = 'pending'.
-    Only newly inserted rows reach this state (existing 'notified' rows are preserved).
-    Never raises — notification failures must not break the matching job.
-
-    Recipients:
-      1. Every active row in system_notification_recipients (with relevant channel enabled).
-      2. SYSTEM_ALERT_EMAIL is always CC'd via email, regardless of the recipients table.
+    Send ONE consolidated notification per recipient covering ALL pending
+    listings for listed_date in a single email/SMS/WhatsApp.
+    Only newly inserted rows (notification_status='pending') are processed.
+    Never raises — failures must not break the matching job.
     """
     try:
-        # Fetch pending listings
+        # Fetch all pending listings sorted by court hall / item
         pending = _get_all('today_matched_listings', {
             'select': ('id,case_number,cnr_number,listed_date,court_hall,'
                        'item_number,judge_name,petitioner,respondent,stage,notification_count'),
             'listed_date':         f'eq.{listed_date}',
             'notification_status': 'eq.pending',
+            'order':               'court_hall.asc,item_number.asc',
         })
         if not pending:
             print(f'[notify] No pending listings for {listed_date}')
             return
+
+        print(f'[notify] Sending 1 consolidated message for {len(pending)} listing(s) on {listed_date}')
 
         # Fetch configured recipients
         db_recipients = _get_all('system_notification_recipients', {
@@ -833,26 +840,27 @@ def _notify_listings(listed_date: str) -> None:
         if SYSTEM_ALERT_EMAIL.lower() not in db_email_addrs:
             all_email_to.append(SYSTEM_ALERT_EMAIL)
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso        = datetime.now(timezone.utc).isoformat()
 
-        for match in pending:
-            subject, body = _build_email(match)
-            sms_body = _build_sms(match)
-            wa_body  = _build_whatsapp(match)
-            sent   = 0
-            failed = 0
-            delivery_logs: List[Dict] = []
+        # Build consolidated messages ONCE — same content for every recipient
+        subject, email_body = _build_email_bulk(pending)
+        sms_body = _build_sms_bulk(pending)
+        wa_body  = _build_whatsapp_bulk(pending)
 
-            # ── Email ─────────────────────────────────────────────────────────
-            for to_addr in all_email_to:
-                result = _send_email_mailersend(to_addr, subject, body)
-                ok     = result.get('ok', False)
-                # Find matching DB recipient (for log linkage); None for hardcoded addr
-                rec = next(
-                    (r for r in db_recipients
-                     if (r.get('email') or '').lower() == to_addr.lower()),
-                    None,
-                )
+        delivery_logs: List[Dict] = []
+        total_sent     = 0
+        total_failed   = 0
+
+        # ── Email: one send covers all listings ────────────────────────────────
+        for to_addr in all_email_to:
+            result = _send_email_mailersend(to_addr, subject, email_body)
+            ok     = result.get('ok', False)
+            rec    = next(
+                (r for r in db_recipients
+                 if (r.get('email') or '').lower() == to_addr.lower()),
+                None,
+            )
+            for match in pending:
                 delivery_logs.append({
                     'matched_listing_id': match['id'],
                     'recipient_id':       rec['id'] if rec else None,
@@ -860,7 +868,7 @@ def _notify_listings(listed_date: str) -> None:
                     'channel':            'email',
                     'recipient_address':  to_addr,
                     'subject':            subject,
-                    'message':            body,
+                    'message':            email_body,
                     'status':             'sent' if ok else 'failed',
                     'provider':           'mailersend',
                     'provider_response':  result.get('response'),
@@ -870,19 +878,21 @@ def _notify_listings(listed_date: str) -> None:
                     ),
                     'sent_at':            now_iso if ok else None,
                 })
-                if ok:
-                    sent += 1
-                else:
-                    failed += 1
-                    print(f'[notify] Email failed → {to_addr}: '
-                          f'{result.get("error") or result.get("status_code")}')
+            if ok:
+                total_sent += 1
+                print(f'[notify] Email \u2192 {to_addr}: OK')
+            else:
+                total_failed += 1
+                print(f'[notify] Email \u2192 {to_addr} FAILED: '
+                      f'{result.get("error") or result.get("status_code")}')
 
-            # ── SMS ───────────────────────────────────────────────────────────
-            for rec in db_recipients:
-                if not (rec.get('notify_sms') and rec.get('mobile_number')):
-                    continue
-                result = _send_sms_twilio(rec['mobile_number'], sms_body)
-                ok = result.get('ok', False)
+        # ── SMS: one consolidated message per SMS recipient ────────────────────
+        for rec in db_recipients:
+            if not (rec.get('notify_sms') and rec.get('mobile_number')):
+                continue
+            result = _send_sms_twilio(rec['mobile_number'], sms_body)
+            ok = result.get('ok', False)
+            for match in pending:
                 delivery_logs.append({
                     'matched_listing_id': match['id'],
                     'recipient_id':       rec['id'],
@@ -897,15 +907,16 @@ def _notify_listings(listed_date: str) -> None:
                     'error_message':      result.get('error') if not ok else None,
                     'sent_at':            now_iso if ok else None,
                 })
-                if ok: sent += 1
-                else:  failed += 1
+            if ok: total_sent += 1
+            else:  total_failed += 1
 
-            # ── WhatsApp ──────────────────────────────────────────────────────
-            for rec in db_recipients:
-                if not (rec.get('notify_whatsapp') and rec.get('whatsapp_number')):
-                    continue
-                result = _send_whatsapp_twilio(rec['whatsapp_number'], wa_body)
-                ok = result.get('ok', False)
+        # ── WhatsApp: one consolidated message per WA recipient ────────────────
+        for rec in db_recipients:
+            if not (rec.get('notify_whatsapp') and rec.get('whatsapp_number')):
+                continue
+            result = _send_whatsapp_twilio(rec['whatsapp_number'], wa_body)
+            ok = result.get('ok', False)
+            for match in pending:
                 delivery_logs.append({
                     'matched_listing_id': match['id'],
                     'recipient_id':       rec['id'],
@@ -920,32 +931,34 @@ def _notify_listings(listed_date: str) -> None:
                     'error_message':      result.get('error') if not ok else None,
                     'sent_at':            now_iso if ok else None,
                 })
-                if ok: sent += 1
-                else:  failed += 1
+            if ok: total_sent += 1
+            else:  total_failed += 1
 
-            # ── Insert delivery logs ───────────────────────────────────────────
-            if delivery_logs:
-                try:
+        # ── Insert delivery logs ───────────────────────────────────────────────
+        if delivery_logs:
+            try:
+                for i in range(0, len(delivery_logs), BATCH_SIZE):
                     requests.post(
                         f'{SUPABASE_URL}/rest/v1/notification_delivery_logs',
                         headers=_sb_headers(),
-                        json=delivery_logs,
+                        json=delivery_logs[i:i + BATCH_SIZE],
                         timeout=15,
                     )
-                except Exception as exc:
-                    print(f'[notify] delivery log insert error: {exc}')
+            except Exception as exc:
+                print(f'[notify] delivery log insert error: {exc}')
 
-            # ── Update today_matched_listings status ───────────────────────────
-            if sent > 0 and failed == 0:
-                notif_status = 'notified'
-            elif sent > 0:
-                notif_status = 'partial'
-            elif failed > 0:
-                notif_status = 'failed'
-            else:
-                notif_status = 'no_recipients'
+        # ── Mark all pending listings with the same outcome ────────────────────
+        if total_sent > 0 and total_failed == 0:
+            notif_status = 'notified'
+        elif total_sent > 0:
+            notif_status = 'partial'
+        elif total_failed > 0:
+            notif_status = 'failed'
+        else:
+            notif_status = 'no_recipients'
 
-            prev_count = int(match.get('notification_count') or 0)
+        for match in pending:
+            prev = int(match.get('notification_count') or 0)
             requests.patch(
                 f'{SUPABASE_URL}/rest/v1/today_matched_listings',
                 headers=_sb_headers(),
@@ -953,12 +966,13 @@ def _notify_listings(listed_date: str) -> None:
                 json={
                     'notification_status':  notif_status,
                     'notification_sent_at': now_iso,
-                    'notification_count':   prev_count + sent,
+                    'notification_count':   prev + total_sent,
                 },
                 timeout=15,
             )
-            print(f'[notify] {match.get("case_number")} \u2192 {notif_status} '
-                  f'(sent={sent}, failed={failed})')
+
+        print(f'[notify] {len(pending)} listing(s) \u2192 {notif_status} '
+              f'(channels_sent={total_sent}, channels_failed={total_failed})')
 
     except Exception as exc:
         print(f'[notify] ERROR (non-fatal): {exc}')
