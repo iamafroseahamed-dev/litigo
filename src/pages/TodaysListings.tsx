@@ -170,7 +170,6 @@ export default function TodaysListingsPage() {
   const refreshListings = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await fetch('/api/todays-cause-list?refresh=1').catch(() => null);
       const res  = await fetch('/api/match-todays-listings', { method: 'POST' });
       const data = await res.json();
       setListedDateFrom(defaultDate);
