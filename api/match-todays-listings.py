@@ -647,9 +647,8 @@ def _sync_cases_table(enriched_matches: List[Dict]) -> int:
 
 
 # ── Automatic notifications ────────────────────────────────────────────────────
-# Email via NotificationService (Resend). SMS/WhatsApp are intentionally empty.
+# All channels (Email, SMS, WhatsApp) delivered via MSG91 NotificationService.
 
-MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
 NOTIFICATION_SERVICE = NotificationService()
 
 
@@ -715,95 +714,6 @@ def _build_whatsapp_bulk(matches: List[Dict]) -> str:
         ]
     lines.append('Please login to Litigo for details.')
     return '\n'.join(lines)
-
-
-def _send_email_mailersend(to: str, subject: str, body: str) -> Dict[str, Any]:
-    """Send email via MailerSend.
-    Requires MAILERSEND_API_KEY environment variable.
-    EMAIL_FROM defaults to 'notifications@litigo.in'.
-    EMAIL_FROM_NAME defaults to 'Litigo'.
-    """
-    api_key   = os.environ.get('MAILERSEND_API_KEY', '')
-    from_addr = os.environ.get('EMAIL_FROM', 'notifications@litigo.in')
-    from_name = os.environ.get('EMAIL_FROM_NAME', 'Litigo')
-    if not api_key:
-        return {'ok': False, 'error': 'MAILERSEND_API_KEY not set'}
-    try:
-        r = requests.post(
-            MAILERSEND_URL,
-            headers={
-                'Authorization':    f'Bearer {api_key}',
-                'Content-Type':     'application/json',
-                'X-Requested-With': 'XMLHttpRequest',
-            },
-            json={
-                'from':    {'email': from_addr, 'name': from_name},
-                'to':      [{'email': to}],
-                'subject': subject,
-                'text':    body,
-            },
-            timeout=(5, 15),
-        )
-        resp = {}
-        try:
-            resp = r.json() if r.text else {}
-        except Exception:
-            resp = {'raw': r.text[:200]}
-        return {'ok': r.ok, 'status_code': r.status_code, 'response': resp}
-    except Exception as exc:
-        return {'ok': False, 'error': str(exc)}
-
-
-def _send_sms_twilio(to: str, body: str) -> Dict[str, Any]:
-    """Send SMS via Twilio. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
-    and TWILIO_SMS_FROM (a purchased Twilio number, e.g. +15005550006).
-    Trial accounts can only send to verified recipient numbers."""
-    sid   = os.environ.get('TWILIO_ACCOUNT_SID', '')
-    token = os.environ.get('TWILIO_AUTH_TOKEN', '')
-    from_ = os.environ.get('TWILIO_SMS_FROM', '')
-    if not sid or not token or not from_:
-        return {'ok': False, 'error': 'TWILIO_SMS_FROM not configured'}
-    try:
-        r = requests.post(
-            f'https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json',
-            auth=(sid, token),
-            data={'From': from_, 'To': to, 'Body': body},
-            timeout=(5, 15),
-        )
-        resp = {}
-        try:
-            resp = r.json()
-        except Exception:
-            resp = {'raw': r.text[:200]}
-        return {'ok': r.ok, 'status_code': r.status_code, 'response': resp}
-    except Exception as exc:
-        return {'ok': False, 'error': str(exc)}
-
-
-def _send_whatsapp_twilio(to: str, body: str) -> Dict[str, Any]:
-    """Send WhatsApp via Twilio. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
-    and TWILIO_WHATSAPP_FROM (e.g. whatsapp:+14155238886 for the sandbox)."""
-    sid   = os.environ.get('TWILIO_ACCOUNT_SID', '')
-    token = os.environ.get('TWILIO_AUTH_TOKEN', '')
-    from_ = os.environ.get('TWILIO_WHATSAPP_FROM', '')
-    if not sid or not token or not from_:
-        return {'ok': False, 'error': 'TWILIO_WHATSAPP_FROM not configured'}
-    wa_to = f'whatsapp:{to}' if not to.startswith('whatsapp:') else to
-    try:
-        r = requests.post(
-            f'https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json',
-            auth=(sid, token),
-            data={'From': from_, 'To': wa_to, 'Body': body},
-            timeout=(5, 15),
-        )
-        resp = {}
-        try:
-            resp = r.json()
-        except Exception:
-            resp = {'raw': r.text[:200]}
-        return {'ok': r.ok, 'status_code': r.status_code, 'response': resp}
-    except Exception as exc:
-        return {'ok': False, 'error': str(exc)}
 
 
 def _notify_listings(listed_date: str) -> None:
@@ -872,7 +782,7 @@ def _notify_listings(listed_date: str) -> None:
                     'subject':            subject,
                     'message':            email_body,
                     'status':             'sent' if ok else 'failed',
-                    'provider':           'resend',
+                    'provider':           'mailersend',
                     'provider_response':  result.get('response'),
                     'error_message':      (
                         result.get('error')
@@ -893,6 +803,7 @@ def _notify_listings(listed_date: str) -> None:
             if not (rec.get('notify_sms') and rec.get('mobile_number')):
                 continue
             result = NOTIFICATION_SERVICE.send_sms(rec['mobile_number'], sms_body)
+            sms_ok = result.get('ok', False)
             for match in pending:
                 delivery_logs.append({
                     'matched_listing_id': match['id'],
@@ -902,19 +813,25 @@ def _notify_listings(listed_date: str) -> None:
                     'recipient_address':  rec['mobile_number'],
                     'subject':            None,
                     'message':            sms_body,
-                    'status':             'skipped',
+                    'status':             'sent' if sms_ok else 'failed',
                     'provider':           'msg91',
                     'provider_response':  result.get('response'),
                     'error_message':      result.get('error'),
-                    'sent_at':            None,
+                    'sent_at':            now_iso if sms_ok else None,
                 })
-            print(f'[notify] SMS skipped for {rec["mobile_number"]}')
+            if sms_ok:
+                total_sent += 1
+                print(f'[notify] SMS → {rec["mobile_number"]}: OK')
+            else:
+                total_failed += 1
+                print(f'[notify] SMS → {rec["mobile_number"]} FAILED: {result.get("error")}')
 
         # ── WhatsApp: one consolidated message per WA recipient ────────────────
         for rec in db_recipients:
             if not (rec.get('notify_whatsapp') and rec.get('whatsapp_number')):
                 continue
             result = NOTIFICATION_SERVICE.send_whatsapp(rec['whatsapp_number'], wa_body)
+            wa_ok = result.get('ok', False)
             for match in pending:
                 delivery_logs.append({
                     'matched_listing_id': match['id'],
@@ -924,13 +841,18 @@ def _notify_listings(listed_date: str) -> None:
                     'recipient_address':  rec['whatsapp_number'],
                     'subject':            None,
                     'message':            wa_body,
-                    'status':             'skipped',
+                    'status':             'sent' if wa_ok else 'failed',
                     'provider':           'msg91',
                     'provider_response':  result.get('response'),
                     'error_message':      result.get('error'),
-                    'sent_at':            None,
+                    'sent_at':            now_iso if wa_ok else None,
                 })
-            print(f'[notify] WhatsApp skipped for {rec["whatsapp_number"]}')
+            if wa_ok:
+                total_sent += 1
+                print(f'[notify] WhatsApp → {rec["whatsapp_number"]}: OK')
+            else:
+                total_failed += 1
+                print(f'[notify] WhatsApp → {rec["whatsapp_number"]} FAILED: {result.get("error")}')
 
         # ── Insert delivery logs ───────────────────────────────────────────────
         if delivery_logs:

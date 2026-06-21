@@ -40,27 +40,31 @@ def _require_configured() -> None:
 
 def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        'auth_key': (payload.get('auth_key') or '').strip(),
-        'sender_id': (payload.get('sender_id') or '').strip(),
-        'whatsapp_template_id': (payload.get('whatsapp_template_id') or '').strip(),
-        'whatsapp_flow_id': (payload.get('whatsapp_flow_id') or '').strip(),
+        'auth_key':               (payload.get('auth_key')               or '').strip(),
+        'sender_id':              (payload.get('sender_id')              or '').strip(),
+        'sms_template_id':        (payload.get('sms_template_id')        or '').strip(),
+        'whatsapp_sender_number': (payload.get('whatsapp_sender_number') or '').strip(),
+        'whatsapp_template_id':   (payload.get('whatsapp_template_id')   or '').strip(),
+        'whatsapp_flow_id':       (payload.get('whatsapp_flow_id')       or '').strip(),
     }
 
 
 def _settings_response(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     config = (row or {}).get('config') or {}
     return {
-        'id': (row or {}).get('id'),
-        'organization_id': (row or {}).get('organization_id'),
-        'provider_type': (row or {}).get('provider_type') or PROVIDER_TYPE,
-        'provider_name': (row or {}).get('provider_name') or PROVIDER_NAME,
-        'active': bool((row or {}).get('active', True)),
-        'auth_key_present': bool(config.get('auth_key')),
-        'sender_id': config.get('sender_id') or '',
-        'whatsapp_template_id': config.get('whatsapp_template_id') or '',
-        'whatsapp_flow_id': config.get('whatsapp_flow_id') or '',
-        'created_at': (row or {}).get('created_at'),
-        'updated_at': (row or {}).get('updated_at'),
+        'id':                     (row or {}).get('id'),
+        'organization_id':        (row or {}).get('organization_id'),
+        'provider_type':          (row or {}).get('provider_type') or PROVIDER_TYPE,
+        'provider_name':          (row or {}).get('provider_name') or PROVIDER_NAME,
+        'active':                 bool((row or {}).get('active', True)),
+        'auth_key_present':       bool(config.get('auth_key')),
+        'sender_id':              config.get('sender_id') or '',
+        'sms_template_id':        config.get('sms_template_id') or '',
+        'whatsapp_sender_number': config.get('whatsapp_sender_number') or '',
+        'whatsapp_template_id':   config.get('whatsapp_template_id') or '',
+        'whatsapp_flow_id':       config.get('whatsapp_flow_id') or '',
+        'created_at':             (row or {}).get('created_at'),
+        'updated_at':             (row or {}).get('updated_at'),
     }
 
 
@@ -114,9 +118,11 @@ def save_msg91_settings(organization_id: str, payload: Dict[str, Any], auth_toke
     elif not merged_config.get('auth_key'):
         raise ValueError('MSG91 Auth Key is required the first time you save these settings.')
 
-    merged_config['sender_id'] = base_payload['sender_id']
-    merged_config['whatsapp_template_id'] = base_payload['whatsapp_template_id']
-    merged_config['whatsapp_flow_id'] = base_payload['whatsapp_flow_id']
+    merged_config['sender_id']              = base_payload['sender_id']
+    merged_config['sms_template_id']        = base_payload['sms_template_id']
+    merged_config['whatsapp_sender_number'] = base_payload['whatsapp_sender_number']
+    merged_config['whatsapp_template_id']   = base_payload['whatsapp_template_id']
+    merged_config['whatsapp_flow_id']       = base_payload['whatsapp_flow_id']
 
     now_iso = datetime.now(timezone.utc).isoformat()
     row_payload = {

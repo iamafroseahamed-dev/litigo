@@ -287,6 +287,8 @@ class Msg91SettingsRequest(BaseModel):
     organization_id: str
     auth_key: Optional[str] = None
     sender_id: Optional[str] = None
+    sms_template_id: Optional[str] = None
+    whatsapp_sender_number: Optional[str] = None
     whatsapp_template_id: Optional[str] = None
     whatsapp_flow_id: Optional[str] = None
 
@@ -442,6 +444,37 @@ def _patch_case_after_enrichment(
     resp.raise_for_status()
 
 
+def _build_notification_service(org_id: str, supabase_url: str, sb_headers: Dict[str, str]) -> NotificationService:
+    """Build NotificationService from DB-stored MSG91 config; falls back to env vars."""
+    config: Dict[str, Any] = {}
+    try:
+        resp = requests.get(
+            f'{supabase_url}/rest/v1/notification_providers',
+            headers=sb_headers,
+            params={
+                'select':          'config',
+                'organization_id': f'eq.{org_id}',
+                'provider_type':   'eq.messaging',
+                'provider_name':   'eq.msg91',
+                'active':          'eq.true',
+                'limit':           '1',
+            },
+            timeout=10,
+        )
+        if resp.ok:
+            rows = resp.json() or []
+            config = (rows[0].get('config') or {}) if rows else {}
+    except Exception:
+        pass
+    return NotificationService(
+        msg91_auth_key=config.get('auth_key'),
+        msg91_sender_id=config.get('sender_id'),
+        msg91_sms_template_id=config.get('sms_template_id'),
+        msg91_whatsapp_sender=config.get('whatsapp_sender_number'),
+        msg91_whatsapp_template_id=config.get('whatsapp_template_id'),
+    )
+
+
 def _notify_pending_listings(
     supabase_url: str,
     sb_headers: Dict[str, str],
@@ -451,7 +484,7 @@ def _notify_pending_listings(
         f'{supabase_url}/rest/v1/today_matched_listings',
         headers=sb_headers,
         params={
-            'select': 'id,case_number,cnr_number,listed_date,court_hall,item_number,judge_name,petitioner,respondent,stage,notification_count',
+            'select': 'id,organization_id,case_number,cnr_number,listed_date,court_hall,item_number,judge_name,petitioner,respondent,stage,notification_count',
             'listed_date': f'eq.{listed_date}',
             'notification_status': 'in.(pending,not_notified)',
             'order': 'court_hall.asc,item_number.asc',
@@ -468,7 +501,7 @@ def _notify_pending_listings(
         f'{supabase_url}/rest/v1/system_notification_recipients',
         headers=sb_headers,
         params={
-            'select': 'id,name,email,notify_email',
+            'select': 'id,name,email,mobile_number,whatsapp_number,notify_email,notify_sms,notify_whatsapp',
             'active': 'eq.true',
             'limit': '1000',
         },
@@ -476,10 +509,10 @@ def _notify_pending_listings(
     )
     recipient_resp.raise_for_status()
     recipients = recipient_resp.json() or []
-    email_recipients = [
-        rec for rec in recipients
-        if rec.get('notify_email') and rec.get('email')
-    ]
+    email_recipients = [rec for rec in recipients if rec.get('notify_email') and rec.get('email')]
+
+    org_id = (pending[0].get('organization_id') or '') if pending else ''
+    notification_service = _build_notification_service(org_id, supabase_url, sb_headers)
 
     if not email_recipients:
         for match in pending:
@@ -495,9 +528,10 @@ def _notify_pending_listings(
             )
         return 0
 
-    subject = f'Litigo Alert - {len(pending)} Case{"s" if len(pending) != 1 else ""} Listed ({listed_date})'
+    count = len(pending)
+    subject = f'Litigo Alert - {count} Case{"s" if count != 1 else ""} Listed ({listed_date})'
     body_lines = [
-        f'{len(pending)} tracked case{"s have" if len(pending) != 1 else " has"} been listed on {listed_date}.',
+        f'{count} tracked case{"s have" if count != 1 else " has"} been listed on {listed_date}.',
         '',
         'Please login to Litigo for full details.',
         '',
@@ -506,15 +540,30 @@ def _notify_pending_listings(
     ]
     body = '\n'.join(body_lines)
 
-    notification_service = NotificationService()
     sent_count = 0
     failed_count = 0
+
+    # ── Email ──────────────────────────────────────────────────────────────────
     for recipient in email_recipients:
-        result = notification_service.send_email(recipient['email'], subject, body)
+        result = notification_service.send_email(recipient['email'], subject, body, recipient.get('name', ''))
         if result.get('ok'):
             sent_count += 1
         else:
             failed_count += 1
+
+    # ── SMS ────────────────────────────────────────────────────────────────────
+    sms_body = f'Litigo Alert: {count} case{"s" if count != 1 else ""} listed on {listed_date}. Login for details.'
+    for recipient in recipients:
+        if not (recipient.get('notify_sms') and recipient.get('mobile_number')):
+            continue
+        notification_service.send_sms(recipient['mobile_number'], sms_body)
+
+    # ── WhatsApp ───────────────────────────────────────────────────────────────
+    wa_body = f'\u2696\ufe0f Litigo Alert\n\n{count} case{"s" if count != 1 else ""} listed on {listed_date}.\nLogin to Litigo for full details.'
+    for recipient in recipients:
+        if not (recipient.get('notify_whatsapp') and recipient.get('whatsapp_number')):
+            continue
+        notification_service.send_whatsapp(recipient['whatsapp_number'], wa_body)
 
     notif_status = 'notified' if sent_count and not failed_count else 'partial' if sent_count else 'failed'
     if sent_count == 0 and failed_count == 0:
@@ -2389,41 +2438,22 @@ def _sb_post(path: str, payload: Any) -> Any:
     return resp
 
 
-def _send_email_resend(to_email: str, subject: str, body: str) -> Dict[str, Any]:
-    """Send email via Resend. Returns {ok, error}."""
-    resend_key = os.environ.get('RESEND_API_KEY', '')
-    from_addr = os.environ.get('RESEND_FROM', 'Litigo <notifications@litigo.in>')
-    if not resend_key:
-        return {'ok': False, 'error': 'RESEND_API_KEY not configured.'}
-    try:
-        resp = requests.post(
-            'https://api.resend.com/emails',
-            headers={'Authorization': f'Bearer {resend_key}', 'Content-Type': 'application/json'},
-            json={'from': from_addr, 'to': [to_email], 'subject': subject, 'text': body},
-            timeout=20,
-        )
-        if resp.ok:
-            return {'ok': True, 'data': resp.json()}
-        return {'ok': False, 'error': resp.text}
-    except Exception as exc:
-        return {'ok': False, 'error': str(exc)}
-
-
 @app.post('/api/notifications/send-case-alert')
 def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
     if not request.recipients:
         raise HTTPException(status_code=400, detail='No recipients specified.')
 
-    notification_service = NotificationService()
-
     # Load recipient details from Supabase
     recipient_ids = [r.recipient_id for r in request.recipients]
-    id_filter = ','.join(f'"{rid}"' for rid in recipient_ids)
     try:
         recs_raw = _sb_get(f'case_notification_recipients?id=in.({",".join(recipient_ids)})')
         recs: Dict[str, Any] = {r['id']: r for r in recs_raw}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f'Failed to load recipients: {exc}') from exc
+
+    # Build notification service from this organisation's MSG91 settings
+    org_id = next((r.get('organization_id') for r in recs.values() if r.get('organization_id')), '')
+    notification_service = _build_notification_service(org_id, settings.supabase_url, _sb_headers())
 
     now = datetime.utcnow().isoformat()
     sent = 0
@@ -2437,7 +2467,9 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
 
         # ── Email ──────────────────────────────────────────────────────────────
         if p.send_email and rec.get('email'):
-            result = notification_service.send_email(rec['email'], request.subject, request.message)
+            result = notification_service.send_email(
+                rec['email'], request.subject, request.message, rec.get('recipient_name', '')
+            )
             status = 'sent' if result['ok'] else 'failed'
             if result['ok']:
                 sent += 1
@@ -2454,15 +2486,20 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
                 'subject': request.subject,
                 'message': request.message,
                 'status': status,
-                'provider': 'resend',
+                'provider': 'mailersend',
                 'provider_response': result,
-                'sent_at': now,
+                'sent_at': now if result['ok'] else None,
                 'created_at': now,
             })
 
-        # ── SMS (stub) ─────────────────────────────────────────────────────────
+        # ── SMS ────────────────────────────────────────────────────────────────
         if p.send_sms and rec.get('mobile_number'):
             result = notification_service.send_sms(rec['mobile_number'], request.message)
+            sms_status = 'sent' if result.get('ok') else 'failed'
+            if result.get('ok'):
+                sent += 1
+            else:
+                failed += 1
             logs.append({
                 'case_id': request.case_id,
                 'cause_date': request.cause_date,
@@ -2472,16 +2509,21 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
                 'recipient_mobile': rec['mobile_number'],
                 'subject': request.subject,
                 'message': request.message,
-                'status': 'pending',
+                'status': sms_status,
                 'provider': 'msg91',
                 'provider_response': result,
-                'sent_at': now,
+                'sent_at': now if result.get('ok') else None,
                 'created_at': now,
             })
 
-        # ── WhatsApp (stub) ────────────────────────────────────────────────────
+        # ── WhatsApp ───────────────────────────────────────────────────────────
         if p.send_whatsapp and rec.get('whatsapp_number'):
             result = notification_service.send_whatsapp(rec['whatsapp_number'], request.message)
+            wa_status = 'sent' if result.get('ok') else 'failed'
+            if result.get('ok'):
+                sent += 1
+            else:
+                failed += 1
             logs.append({
                 'case_id': request.case_id,
                 'cause_date': request.cause_date,
@@ -2491,10 +2533,10 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
                 'recipient_whatsapp': rec['whatsapp_number'],
                 'subject': request.subject,
                 'message': request.message,
-                'status': 'pending',
+                'status': wa_status,
                 'provider': 'msg91',
                 'provider_response': result,
-                'sent_at': now,
+                'sent_at': now if result.get('ok') else None,
                 'created_at': now,
             })
 

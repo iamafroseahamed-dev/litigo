@@ -49,6 +49,8 @@ export default function Settings() {
   const [providerSaving, setProviderSaving] = useState(false);
   const [msg91AuthKey, setMsg91AuthKey] = useState('');
   const [msg91SenderId, setMsg91SenderId] = useState('');
+  const [msg91SmsTemplateId, setMsg91SmsTemplateId] = useState('');
+  const [msg91WhatsappSenderNumber, setMsg91WhatsappSenderNumber] = useState('');
   const [msg91WhatsappTemplateId, setMsg91WhatsappTemplateId] = useState('');
   const [msg91WhatsappFlowId, setMsg91WhatsappFlowId] = useState('');
   const [msg91Configured, setMsg91Configured] = useState(false);
@@ -82,6 +84,8 @@ export default function Settings() {
       if (!res.ok) throw new Error(data?.detail || data?.message || 'Unable to load MSG91 settings.');
       setMsg91Configured(Boolean(data?.auth_key_present));
       setMsg91SenderId(data?.sender_id || '');
+      setMsg91SmsTemplateId(data?.sms_template_id || '');
+      setMsg91WhatsappSenderNumber(data?.whatsapp_sender_number || '');
       setMsg91WhatsappTemplateId(data?.whatsapp_template_id || '');
       setMsg91WhatsappFlowId(data?.whatsapp_flow_id || '');
       setMsg91AuthKey('');
@@ -181,6 +185,8 @@ export default function Settings() {
           organization_id: orgId,
           auth_key: msg91AuthKey.trim() || null,
           sender_id: msg91SenderId.trim() || null,
+          sms_template_id: msg91SmsTemplateId.trim() || null,
+          whatsapp_sender_number: msg91WhatsappSenderNumber.trim() || null,
           whatsapp_template_id: msg91WhatsappTemplateId.trim() || null,
           whatsapp_flow_id: msg91WhatsappFlowId.trim() || null,
         }),
@@ -303,7 +309,8 @@ export default function Settings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Email uses Resend now. MSG91 values are stored on the backend for future SMS and WhatsApp delivery.
+            Email is delivered via <strong>MailerSend</strong> (configured in server environment).
+            SMS and WhatsApp are delivered via <strong>MSG91</strong> — configure your credentials below.
           </p>
           {providerLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
@@ -319,23 +326,23 @@ export default function Settings() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>MSG91 Sender ID</Label>
-                <Input value={msg91SenderId} onChange={e => setMsg91SenderId(e.target.value)} placeholder="Sender ID" />
+                <Label>SMS Sender ID</Label>
+                <Input value={msg91SenderId} onChange={e => setMsg91SenderId(e.target.value)} placeholder="LITIGO" />
               </div>
               <div className="space-y-1.5">
-                <Label>MSG91 WhatsApp Template ID</Label>
+                <Label>SMS Template ID <span className="text-xs text-muted-foreground">(optional, for DLT)</span></Label>
+                <Input value={msg91SmsTemplateId} onChange={e => setMsg91SmsTemplateId(e.target.value)} placeholder="DLT template ID" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>WhatsApp Sender Number</Label>
+                <Input value={msg91WhatsappSenderNumber} onChange={e => setMsg91WhatsappSenderNumber(e.target.value)} placeholder="91XXXXXXXXXX" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>WhatsApp Template Name</Label>
                 <Input
                   value={msg91WhatsappTemplateId}
                   onChange={e => setMsg91WhatsappTemplateId(e.target.value)}
-                  placeholder="Template ID"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>MSG91 WhatsApp Flow ID</Label>
-                <Input
-                  value={msg91WhatsappFlowId}
-                  onChange={e => setMsg91WhatsappFlowId(e.target.value)}
-                  placeholder="Flow ID"
+                  placeholder="e.g. litigo_case_alert"
                 />
               </div>
             </div>
