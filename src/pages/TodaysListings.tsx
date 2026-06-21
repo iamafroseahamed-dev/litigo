@@ -573,7 +573,6 @@ export default function TodaysListingsPage() {
                   <TableHead className="whitespace-nowrap">Timeline</TableHead>
                   <TableHead className="whitespace-nowrap">Case Status</TableHead>
                   <TableHead className="whitespace-nowrap">Sensitivity</TableHead>
-                  <TableHead className="whitespace-nowrap">CLA Party</TableHead>
                   <TableHead className="whitespace-nowrap">Notification</TableHead>
                 </TableRow>
               </TableHeader>
@@ -600,10 +599,7 @@ export default function TodaysListingsPage() {
                         <TableCell className="w-8 p-1">
                           <Button
                             variant="ghost" size="icon" className="h-6 w-6"
-                            disabled={hearings.length === 0}
-                            title={hearings.length === 0
-                              ? 'No hearing history stored'
-                              : isExpanded ? 'Collapse' : 'Show hearing history'}
+                            title={isExpanded ? 'Collapse details' : 'Show case details & timeline'}
                             onClick={() => toggleRow(record.id)}
                           >
                             {isExpanded
@@ -677,9 +673,6 @@ export default function TodaysListingsPage() {
                         <TableCell className="whitespace-nowrap text-xs">
                           {record.case?.sensitivity ?? '\u2014'}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs">
-                          {record.case?.cla_party_status ?? '\u2014'}
-                        </TableCell>
                         <TableCell className="whitespace-nowrap">
                           <NotifBadge
                             status={record.notification_status}
@@ -688,82 +681,187 @@ export default function TodaysListingsPage() {
                         </TableCell>
                       </TableRow>,
 
-                      /* Expanded hearing history row */
+                      /* Expanded detail panel */
                       isExpanded && (
                         <TableRow key={`${record.id}-exp`}
                           className="bg-muted/10 hover:bg-muted/10">
                           <TableCell colSpan={16} className="p-0">
-                            <div className="px-10 py-4 border-t">
-                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-                                Case Timeline & Hearing History
-                                {record.ecourts_synced_at && (
-                                  <span className="ml-2 font-normal normal-case">
-                                    (synced {fmtDate(record.ecourts_synced_at)})
-                                  </span>
-                                )}
-                              </p>
+                            <div className="px-8 py-5 border-t border-border/60 space-y-5">
 
-                              {/* Summary cards */}
-                              <div className="grid grid-cols-3 gap-3 mb-4 text-xs">
-                                <div className="border rounded-lg p-2 bg-background/50">
-                                  <div className="text-muted-foreground font-medium">Listed Date</div>
-                                  <div className="font-mono text-sm font-bold text-foreground">
-                                    {fmtDate(record.listed_date ?? record.match_date)}
+                              {/* ── Case Information ─────────────────────── */}
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                                  Case Information
+                                </p>
+                                <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4 text-xs">
+                                  <div>
+                                    <div className="text-muted-foreground">Case Number</div>
+                                    <div className="font-mono font-semibold mt-0.5">{record.case_number ?? '—'}</div>
                                   </div>
-                                </div>
-                                <div className="border rounded-lg p-2 bg-background/50">
-                                  <div className="text-muted-foreground font-medium">Latest Hearing</div>
-                                  <div className="font-mono text-sm font-bold text-foreground">
-                                    {record.latest_hearing_date ? fmtDate(record.latest_hearing_date) : '—'}
-                                  </div>
-                                  {record.latest_hearing_remarks && (
-                                    <div className="text-[11px] text-muted-foreground mt-1 truncate">
-                                      {record.latest_hearing_remarks}
+                                  <div>
+                                    <div className="text-muted-foreground">CNR Number</div>
+                                    <div className="font-mono font-semibold mt-0.5">
+                                      {record.cnr_number ?? record.case?.cnr_number ?? '—'}
                                     </div>
-                                  )}
-                                </div>
-                                <div className="border rounded-lg p-2 bg-background/50">
-                                  <div className="text-muted-foreground font-medium">Next Hearing</div>
-                                  <div className="font-mono text-sm font-bold text-foreground">
-                                    {record.next_hearing_date ? fmtDate(record.next_hearing_date) : '—'}
                                   </div>
-                                  {record.latest_stage && (
-                                    <div className="text-[11px] text-muted-foreground mt-1 truncate">
-                                      {record.latest_stage}
+                                  <div>
+                                    <div className="text-muted-foreground">Court Hall</div>
+                                    <div className="font-semibold mt-0.5">{record.court_hall ?? '—'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-muted-foreground">Item No.</div>
+                                    <div className="font-semibold mt-0.5">{record.item_number ?? '—'}</div>
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <div className="text-muted-foreground">Petitioner</div>
+                                    <div className="font-semibold mt-0.5 break-words">{record.petitioner ?? '—'}</div>
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <div className="text-muted-foreground">Respondent</div>
+                                    <div className="font-semibold mt-0.5 break-words">{record.respondent ?? '—'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-muted-foreground">Judge</div>
+                                    <div className="font-semibold mt-0.5">{record.judge_name ?? '—'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-muted-foreground">Stage</div>
+                                    <div className="font-semibold mt-0.5">{record.stage ?? record.latest_stage ?? '—'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-muted-foreground">Case Status</div>
+                                    <div className="font-semibold mt-0.5">
+                                      {record.latest_case_status ?? record.case?.case_status ?? '—'}
                                     </div>
-                                  )}
+                                  </div>
+                                  <div>
+                                    <div className="text-muted-foreground">Listed Date</div>
+                                    <div className="font-semibold mt-0.5">{fmtDate(record.listed_date ?? record.match_date)}</div>
+                                  </div>
                                 </div>
                               </div>
 
-                              {/* Timeline */}
-                              {hearings.length === 0 ? (
-                                <p className="text-xs text-muted-foreground py-2">
-                                  No hearing history timeline available.
+                              {/* ── eCourts Hearing Details ───────────────── */}
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+                                  eCourts Hearing Details
+                                  {record.ecourts_sync_status && (
+                                    <Badge
+                                      variant={
+                                        record.ecourts_sync_status === 'done' ? 'success'
+                                        : record.ecourts_sync_status === 'failed' ? 'destructive'
+                                        : 'secondary'
+                                      }
+                                      className="text-[9px] normal-case tracking-normal"
+                                    >
+                                      {record.ecourts_sync_status}
+                                    </Badge>
+                                  )}
+                                  {record.ecourts_synced_at && (
+                                    <span className="font-normal text-[10px] text-muted-foreground/70 normal-case tracking-normal">
+                                      synced {fmtDate(record.ecourts_synced_at)}
+                                    </span>
+                                  )}
                                 </p>
-                              ) : (
-                                <div className="space-y-2">
-                                  {hearings.map((h, i) => (
-                                    <div key={i} className="flex gap-3">
-                                      <div className="flex flex-col items-center gap-0 pt-1">
-                                        <div className="w-3 h-3 rounded-full bg-primary" />
-                                        {i < hearings.length - 1 && (
-                                          <div className="w-0.5 h-6 bg-border" />
-                                        )}
-                                      </div>
-                                      <div className="pb-2 flex-1 min-w-0">
-                                        <div className="font-mono text-xs font-bold">
-                                          {fmtDate(h.date) || h.date || '—'}
-                                        </div>
-                                        <div className="text-xs text-muted-foreground">
-                                          {h.stage && <span className="block">{h.stage}</span>}
-                                          {h.business && <span className="block">{h.business}</span>}
-                                          {h.remarks && <span className="block italic">{h.remarks}</span>}
-                                        </div>
-                                      </div>
+                                <div className="grid grid-cols-3 gap-3 text-xs">
+                                  <div className="rounded-lg border bg-background/60 p-3">
+                                    <div className="text-muted-foreground font-medium mb-1">Latest Hearing</div>
+                                    <div className="font-mono font-bold text-sm">
+                                      {record.latest_hearing_date ? fmtDate(record.latest_hearing_date) : '—'}
                                     </div>
-                                  ))}
+                                    {record.latest_hearing_remarks && (
+                                      <div className="text-[11px] text-muted-foreground mt-1">
+                                        {record.latest_hearing_remarks}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="rounded-lg border bg-background/60 p-3">
+                                    <div className="text-muted-foreground font-medium mb-1">Next Hearing</div>
+                                    <div className="font-mono font-bold text-sm">
+                                      {record.next_hearing_date ? fmtDate(record.next_hearing_date) : '—'}
+                                    </div>
+                                    {record.latest_stage && (
+                                      <div className="text-[11px] text-muted-foreground mt-1">{record.latest_stage}</div>
+                                    )}
+                                  </div>
+                                  <div className="rounded-lg border bg-background/60 p-3">
+                                    <div className="text-muted-foreground font-medium mb-1">Listing History</div>
+                                    {(() => {
+                                      const hist = listingHistoryMap.get(record.case_id);
+                                      return hist ? (
+                                        <>
+                                          <div className="font-bold text-sm">{hist.count}× listed</div>
+                                          <div className="text-[11px] text-muted-foreground mt-1">
+                                            First: {fmtDate(hist.firstListed)}<br />
+                                            Last: {fmtDate(hist.lastListed)}
+                                          </div>
+                                        </>
+                                      ) : <div className="font-bold text-sm">—</div>;
+                                    })()}
+                                  </div>
                                 </div>
-                              )}
+                              </div>
+
+                              {/* ── Hearing Timeline ──────────────────────── */}
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                                  Hearing Timeline
+                                  <span className="ml-2 font-normal normal-case text-muted-foreground/70">
+                                    ({hearings.length} event{hearings.length !== 1 ? 's' : ''})
+                                  </span>
+                                </p>
+                                {hearings.length === 0 ? (
+                                  <p className="text-xs text-muted-foreground py-1">
+                                    {record.ecourts_sync_status === 'pending' || record.ecourts_sync_status === 'pending_cnr'
+                                      ? 'eCourts sync pending — run the script to fetch hearing history.'
+                                      : record.ecourts_sync_status === 'failed'
+                                        ? 'eCourts sync failed. Will retry on next run.'
+                                        : 'No hearing history available.'}
+                                  </p>
+                                ) : (
+                                  <div className="relative pl-4 space-y-0">
+                                    <div className="absolute left-4 top-2 bottom-2 w-px bg-border" />
+                                    {hearings.map((h, i) => (
+                                      <div key={i} className="relative flex gap-4 pb-4 last:pb-0">
+                                        <div className="absolute -left-[3px] top-[5px] w-2.5 h-2.5 rounded-full border-2 border-primary bg-background z-10" />
+                                        <div className="pl-4 flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-mono text-xs font-bold">
+                                              {fmtDate(h.date) || h.date || '—'}
+                                            </span>
+                                            {h.stage && (
+                                              <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                                {h.stage}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                          {h.business && (
+                                            <div className="text-xs text-muted-foreground mt-0.5">{h.business}</div>
+                                          )}
+                                          {h.remarks && (
+                                            <div className="text-xs text-muted-foreground/70 italic mt-0.5">{h.remarks}</div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* ── Notification Status ───────────────────── */}
+                              <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3">
+                                <span>Notification:</span>
+                                <NotifBadge status={record.notification_status} count={record.notification_count} />
+                                {record.notification_sent_at && (
+                                  <span>sent {fmtDate(record.notification_sent_at)}</span>
+                                )}
+                                {record.ecourts_error && (
+                                  <span className="text-destructive ml-auto">
+                                    eCourts error: {record.ecourts_error}
+                                  </span>
+                                )}
+                              </div>
+
                             </div>
                           </TableCell>
                         </TableRow>

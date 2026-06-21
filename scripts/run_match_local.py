@@ -161,42 +161,12 @@ if matched > 0:
     synced = mod._sync_cases_table(enriched)
     print(f'Cases synced: {synced}')
 
-    # Mark newly inserted rows (not_notified → pending)
-    print('\n--- Marking new rows as pending for notification ---')
+    # Show updated case record
     import requests as _req
     sb_url = os.environ['SUPABASE_URL']
     sb_key = os.environ['SUPABASE_SERVICE_ROLE_KEY']
-    hdrs_patch = {
-        'apikey': sb_key, 'Authorization': f'Bearer {sb_key}',
-        'Content-Type': 'application/json',
-    }
-    r_mark = _req.patch(
-        f'{sb_url}/rest/v1/today_matched_listings',
-        headers=hdrs_patch,
-        params={'listed_date': f'eq.{today}', 'notification_status': 'eq.not_notified'},
-        json={'notification_status': 'pending'},
-    )
-    print(f'Mark-pending status: {r_mark.status_code}')
-
-    # Send notifications
-    print('\n--- Sending notifications ---')
-    mod._notify_listings(today)
-
-    # Show notification state in DB
     hdrs = {'apikey': sb_key, 'Authorization': f'Bearer {sb_key}'}
-    notif_r = _req.get(
-        f'{sb_url}/rest/v1/today_matched_listings',
-        headers=hdrs,
-        params={
-            'listed_date': f'eq.{today}',
-            'select': 'case_number,notification_status,notification_count,notification_sent_at',
-        },
-    )
-    print('\nNotification state after run:')
     import json as _json
-    print(_json.dumps(notif_r.json(), indent=2))
-
-    # Show updated case record
     case_r = _req.get(
         f'{sb_url}/rest/v1/cases',
         headers=hdrs,
