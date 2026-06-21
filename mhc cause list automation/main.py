@@ -436,35 +436,44 @@ def _safe_upsert_batch(batch: List[Dict]) -> int:
 # ── Cases master-record sync ───────────────────────────────────────────────────
 
 def _derive_case_patch(match: Dict, today_str: str) -> Optional[Dict]:
-    if match.get('ecourts_sync_status') != 'done':
-        return None
-
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    patch: Dict = {'updated_at': now_iso, 'ecourts_last_synced_at': now_iso}
+    patch: Dict = {'updated_at': now_iso}
 
-    raw_status = (match.get('latest_case_status') or '').strip()
-    if raw_status:
-        sl = raw_status.lower()
-        if 'dispos' in sl:
-            patch['case_status'] = 'Disposed'
-            patch['active']      = False
-        elif 'pending' in sl:
-            patch['case_status'] = 'Pending'
-        else:
-            patch['case_status'] = raw_status
+    # Always record that the case appeared in today's cause list
+    listed = match.get('listed_date') or today_str
+    patch['last_listed_date'] = listed
 
-    if match.get('latest_hearing_date'):
-        patch['last_hearing_date'] = match['latest_hearing_date']
+    stage = (match.get('stage') or '').strip()
+    if stage:
+        patch['current_stage'] = stage
 
-    lhr = (match.get('latest_hearing_remarks') or '').strip()
-    if lhr:
-        patch['last_hearing_update'] = lhr
+    # eCourts enrichment fields — only applied when sync succeeded
+    if match.get('ecourts_sync_status') == 'done':
+        patch['ecourts_last_synced_at'] = now_iso
 
-    nhd = match.get('next_hearing_date')
-    if nhd:
-        patch['next_hearing_date'] = nhd
-        if nhd >= today_str:
-            patch['follow_up_status'] = 'Active'
+        raw_status = (match.get('latest_case_status') or '').strip()
+        if raw_status:
+            sl = raw_status.lower()
+            if 'dispos' in sl:
+                patch['case_status'] = 'Disposed'
+                patch['active']      = False
+            elif 'pending' in sl:
+                patch['case_status'] = 'Pending'
+            else:
+                patch['case_status'] = raw_status
+
+        if match.get('latest_hearing_date'):
+            patch['last_hearing_date'] = match['latest_hearing_date']
+
+        lhr = (match.get('latest_hearing_remarks') or '').strip()
+        if lhr:
+            patch['last_hearing_update'] = lhr
+
+        nhd = match.get('next_hearing_date')
+        if nhd:
+            patch['next_hearing_date'] = nhd
+            if nhd >= today_str:
+                patch['follow_up_status'] = 'Active'
 
     substantive = set(patch) - {'updated_at', 'ecourts_last_synced_at'}
     return patch if substantive else None
@@ -630,11 +639,11 @@ def run_matching_pipeline(listed_date: str) -> None:
             inserted += _safe_upsert_batch(enriched_matches[i:i + BATCH_SIZE])
         log(f'Upserted to today_matched_listings: {inserted}', 'match')
 
-        # 6b. Sync cases master table with latest court status
+        # 6b. Sync cases master table with latest court status + cause list stage
         log_section('STEP 6 — Sync cases master table')
         try:
             synced = _sync_cases_table(enriched_matches)
-            log(f'Cases master table updated: {synced}', 'sync')
+            log(f'Cases master table updated: {synced}/{len(enriched_matches)}', 'sync')
         except Exception as exc:
             log(f'Error (non-fatal): {exc}', 'sync')
 
