@@ -7,11 +7,12 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 const CACHE_TTL_HOURS = 24;
+const JSON_HEADERS = { ...corsHeaders, "Content-Type": "application/json" };
 
-interface RequestBody {
-  case_id: string;
-  case_number?: string;
-  cnr_number?: string;
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
 interface EcourtsCase {
@@ -76,24 +77,39 @@ function parseCaseNumber(caseNumber: string): { type: string; number: string; ye
   return { type, number: num, year };
 }
 
-async function fetchCaseByDnr(cnr: string): Promise<EcourtsCase | null> {
+async function fetchCaseByDnr(cnr: string): Promise<{ data: EcourtsCase | null; status: number; body: string; url: string }> {
   const url = `${ECOURTS_API_BASE}/api/partner/case/${encodeURIComponent(cnr)}`;
+  console.log("[eCourts] GET", url);
   const resp = await fetch(url, {
     headers: {
       "Authorization": `Bearer ${ECOURTS_API_KEY}`,
       "Accept": "application/json",
     },
   });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data as EcourtsCase;
+  const body = await resp.text();
+  console.log("[eCourts] Response status:", resp.status);
+  console.log("[eCourts] Response body:", body.slice(0, 1000));
+  if (!resp.ok) return { data: null, status: resp.status, body, url };
+  try {
+    return { data: JSON.parse(body) as EcourtsCase, status: resp.status, body, url };
+  } catch {
+    return { data: null, status: resp.status, body, url };
+  }
 }
 
-async function searchCase(caseNumber: string): Promise<SearchResult | null> {
+async function searchCase(caseNumber: string): Promise<{ result: SearchResult | null; status: number; body: string; url: string }> {
   const parsed = parseCaseNumber(caseNumber);
-  if (!parsed) return null;
+  if (!parsed) return { result: null, status: 0, body: "Failed to parse case number", url: "" };
 
   const url = `${ECOURTS_API_BASE}/api/partner/search`;
+  const payload = {
+    case_type: parsed.type,
+    case_number: parsed.number,
+    year: parsed.year,
+    state_code: "33",
+    court_code: "1",
+  };
+  console.log("[eCourts] POST", url, JSON.stringify(payload));
   const resp = await fetch(url, {
     method: "POST",
     headers: {
@@ -101,19 +117,19 @@ async function searchCase(caseNumber: string): Promise<SearchResult | null> {
       "Content-Type": "application/json",
       "Accept": "application/json",
     },
-    body: JSON.stringify({
-      case_type: parsed.type,
-      case_number: parsed.number,
-      year: parsed.year,
-      state_code: "33",   // Tamil Nadu
-      court_code: "1",    // Madras High Court
-    }),
+    body: JSON.stringify(payload),
   });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  // API may return an array or object
-  const results: SearchResult[] = Array.isArray(data) ? data : data?.results ?? data?.con ?? [];
-  return results.length > 0 ? results[0] : null;
+  const body = await resp.text();
+  console.log("[eCourts] Search status:", resp.status);
+  console.log("[eCourts] Search body:", body.slice(0, 1000));
+  if (!resp.ok) return { result: null, status: resp.status, body, url };
+  try {
+    const data = JSON.parse(body);
+    const results: SearchResult[] = Array.isArray(data) ? data : data?.results ?? data?.con ?? [];
+    return { result: results.length > 0 ? results[0] : null, status: resp.status, body, url };
+  } catch {
+    return { result: null, status: resp.status, body, url };
+  }
 }
 
 function buildCaseDetails(ecCase: EcourtsCase) {
@@ -147,120 +163,182 @@ function buildCaseDetails(ecCase: EcourtsCase) {
   };
 }
 
+// ── Handler ─────────────────────────────────────────────────────────────────
+
 Deno.serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Step 1 — Parse body safely
+  let body: Record<string, unknown>;
   try {
-    if (req.method !== "POST") {
-      return new Response(
-        JSON.stringify({ success: false, message: "Method not allowed" }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+    body = await req.json();
+  } catch (parseErr) {
+    const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    console.error("[case-details] JSON parse error:", msg);
+    return jsonResponse({
+      success: false,
+      error: "Invalid JSON body",
+      detail: msg,
+      received: null,
+    });
+  }
 
-    const body: RequestBody = await req.json();
-    const { case_id, case_number, cnr_number } = body;
+  console.log("[case-details] REQUEST", JSON.stringify(body, null, 2));
 
-    if (!case_id) {
-      return new Response(
-        JSON.stringify({ success: false, message: "case_id is required" }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+  // Accept both camelCase and snake_case field names
+  const caseId = String(body.caseId ?? body.case_id ?? "").trim();
+  const caseNumber = String(body.caseNumber ?? body.case_number ?? "").trim();
+  const cnrNumber = String(body.cnrNumber ?? body.cnr_number ?? "").trim();
 
-    // Initialize Supabase admin client
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const received = { caseId, caseNumber, cnrNumber };
+  console.log("[case-details] Resolved params:", JSON.stringify(received));
 
-    // Fetch the case row
-    const { data: caseRow, error: caseErr } = await supabase
+  // Step 2 — Validate
+  if (!caseId && !caseNumber) {
+    return jsonResponse({
+      success: false,
+      error: "caseId or caseNumber is required",
+      received,
+    });
+  }
+
+  // Step 3 — Check env vars
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("[case-details] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    return jsonResponse({
+      success: false,
+      error: "Server misconfiguration: missing Supabase credentials",
+      received,
+    });
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // Step 4 — Lookup case in database
+  let caseRow: Record<string, unknown> | null = null;
+  let dbError: string | null = null;
+
+  if (caseId) {
+    console.log("[case-details] Looking up case by id:", caseId);
+    const { data, error } = await supabase
       .from("cases")
       .select("id, cnr_number, case_number, case_details_json, case_details_last_fetched, petitioner, respondent, case_status, next_hearing_date")
-      .eq("id", case_id)
+      .eq("id", caseId)
       .single();
+    caseRow = data;
+    if (error) dbError = error.message;
+  } else {
+    console.log("[case-details] Looking up case by case_number:", caseNumber);
+    const { data, error } = await supabase
+      .from("cases")
+      .select("id, cnr_number, case_number, case_details_json, case_details_last_fetched, petitioner, respondent, case_status, next_hearing_date")
+      .eq("case_number", caseNumber)
+      .single();
+    caseRow = data;
+    if (error) dbError = error.message;
+  }
 
-    if (caseErr || !caseRow) {
-      return new Response(
-        JSON.stringify({ success: false, message: "Case not found in database." }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+  console.log("[case-details] DB result:", caseRow ? `found id=${caseRow.id}` : "not found", dbError ?? "");
+
+  if (!caseRow) {
+    return jsonResponse({
+      success: false,
+      error: "Case not found in database",
+      detail: dbError,
+      received,
+    });
+  }
+
+  // Step 5 — Check cache (24 hours)
+  const cachedDetails = caseRow.case_details_json as Record<string, unknown> | null;
+  const lastFetched = caseRow.case_details_last_fetched as string | null;
+  if (cachedDetails && isCacheFresh(lastFetched)) {
+    console.log("[case-details] Serving from cache (fetched:", lastFetched, ")");
+    return jsonResponse({ success: true, cached: true, caseDetails: cachedDetails });
+  }
+
+  // Step 6 — Resolve CNR
+  let cnr = String(caseRow.cnr_number ?? cnrNumber ?? "").trim();
+  const effectiveCaseNumber = caseNumber || String(caseRow.case_number ?? "");
+  console.log("[case-details] CNR:", cnr || "(empty)", "| caseNumber:", effectiveCaseNumber);
+
+  if (!cnr) {
+    if (!effectiveCaseNumber) {
+      return jsonResponse({
+        success: false,
+        error: "No CNR number and no case number available to search eCourtsIndia",
+        received,
+        caseRow: { id: caseRow.id, cnr_number: caseRow.cnr_number, case_number: caseRow.case_number },
+      });
     }
 
-    // Check cache: serve cached results if fresh (24 hours)
-    if (caseRow.case_details_json && isCacheFresh(caseRow.case_details_last_fetched)) {
-      return new Response(
-        JSON.stringify({ success: true, cached: true, caseDetails: caseRow.case_details_json }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    console.log("[case-details] Searching eCourtsIndia for:", effectiveCaseNumber);
+    const search = await searchCase(effectiveCaseNumber);
+
+    if (!search.result || !search.result.cino) {
+      return jsonResponse({
+        success: false,
+        error: "Case not found in eCourtsIndia search",
+        detail: `Search API returned status ${search.status}`,
+        searchUrl: search.url,
+        searchResponse: search.body.slice(0, 500),
+        received,
+      });
     }
 
-    // Determine CNR
-    let cnr = caseRow.cnr_number ?? cnr_number ?? "";
-    const effectiveCaseNumber = case_number ?? caseRow.case_number ?? "";
+    cnr = search.result.cino;
+    console.log("[case-details] Discovered CNR:", cnr);
 
-    // If no CNR, search for it
-    if (!cnr) {
-      if (!effectiveCaseNumber) {
-        return new Response(
-          JSON.stringify({ success: false, message: "No CNR and no case number available for search." }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      const searchResult = await searchCase(effectiveCaseNumber);
-      if (!searchResult || !searchResult.cino) {
-        return new Response(
-          JSON.stringify({ success: false, message: "Case not found in eCourtsIndia. Please verify the case number." }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      cnr = searchResult.cino;
-
-      // Save discovered CNR
-      await supabase
-        .from("cases")
-        .update({ cnr_number: cnr, cnr_discovered_at: new Date().toISOString() })
-        .eq("id", case_id);
-    }
-
-    // Fetch full case details from eCourtsIndia
-    const ecCase = await fetchCaseByDnr(cnr);
-    if (!ecCase) {
-      return new Response(
-        JSON.stringify({ success: false, message: "Unable to retrieve case details from eCourtsIndia." }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    // Build structured response
-    const caseDetails = buildCaseDetails(ecCase);
-
-    // Save full API response and update case fields
-    const now = new Date().toISOString();
     await supabase
       .from("cases")
-      .update({
-        case_details_json: caseDetails,
-        case_details_last_fetched: now,
-        case_status: ecCase.case_status || caseRow.case_status,
-        petitioner: ecCase.petitioner?.join(", ") || caseRow.petitioner,
-        respondent: ecCase.respondent?.join(", ") || caseRow.respondent,
-        next_hearing_date: ecCase.next_hearing_date || caseRow.next_hearing_date,
-      })
-      .eq("id", case_id);
-
-    return new Response(
-      JSON.stringify({ success: true, cached: false, caseDetails }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return new Response(
-      JSON.stringify({ success: false, message }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+      .update({ cnr_number: cnr, cnr_discovered_at: new Date().toISOString() })
+      .eq("id", caseRow.id);
   }
+
+  // Step 7 — Fetch case details from eCourtsIndia
+  if (!ECOURTS_API_BASE || !ECOURTS_API_KEY) {
+    return jsonResponse({
+      success: false,
+      error: "Server misconfiguration: missing ECOURTS_API_BASE_URL or ECOURTS_API_KEY",
+      received,
+    });
+  }
+
+  const ecResult = await fetchCaseByDnr(cnr);
+
+  if (!ecResult.data) {
+    return jsonResponse({
+      success: false,
+      error: "eCourtsIndia API request failed",
+      detail: `GET ${ecResult.url} returned status ${ecResult.status}`,
+      apiResponse: ecResult.body.slice(0, 500),
+      cnr,
+      received,
+    });
+  }
+
+  // Step 8 — Build response and save
+  const caseDetails = buildCaseDetails(ecResult.data);
+  const now = new Date().toISOString();
+
+  const { error: updateErr } = await supabase
+    .from("cases")
+    .update({
+      case_details_json: caseDetails,
+      case_details_last_fetched: now,
+      case_status: ecResult.data.case_status || caseRow.case_status,
+      petitioner: ecResult.data.petitioner?.join(", ") || caseRow.petitioner,
+      respondent: ecResult.data.respondent?.join(", ") || caseRow.respondent,
+      next_hearing_date: ecResult.data.next_hearing_date || caseRow.next_hearing_date,
+    })
+    .eq("id", caseRow.id);
+
+  if (updateErr) {
+    console.warn("[case-details] DB update failed:", updateErr.message);
+  }
+
+  console.log("[case-details] Success — returning case details for CNR:", cnr);
+  return jsonResponse({ success: true, cached: false, caseDetails });
 });

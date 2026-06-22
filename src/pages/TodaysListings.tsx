@@ -222,28 +222,34 @@ export default function TodaysListingsPage() {
     setDetailsLoading(true);
     setDetailsError(null);
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('case-details', {
-        body: {
-          case_id: record.case_id,
-          case_number: record.case_number ?? record.case?.case_number ?? '',
-          cnr_number: record.case?.cnr_number ?? record.cnr_number ?? '',
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+
+      const res = await fetch(`${supabaseUrl}/functions/v1/case-details`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          caseId: record.case_id,
+          caseNumber: record.case_number ?? record.case?.case_number ?? '',
+          cnrNumber: record.case?.cnr_number ?? record.cnr_number ?? '',
+        }),
       });
 
-      if (fnErr) {
-        setDetailsError(fnErr.message ?? 'Unable to retrieve case details');
-        return;
-      }
+      const data = await res.json();
 
-      if (!data?.success) {
-        setDetailsError(data?.message ?? 'Unable to retrieve case details');
+      if (!res.ok || !data?.success) {
+        const msg = data?.error ?? data?.message ?? data?.detail ?? `Edge Function returned HTTP ${res.status}`;
+        setDetailsError(msg);
         return;
       }
 
       setCaseDetails(data.caseDetails as CaseDetails);
       await fetchData();
-    } catch {
-      setDetailsError('Unable to retrieve case details');
+    } catch (err) {
+      setDetailsError(err instanceof Error ? err.message : 'Unable to retrieve case details');
     } finally {
       setDetailsLoading(false);
     }
