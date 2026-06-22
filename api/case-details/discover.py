@@ -306,40 +306,52 @@ def _supabase_get_listing_case(
             base_filter["case_id"] = f"eq.{case_id}"
             base_filter["order"] = "listed_date.desc,created_at.desc"
 
-        # Try full projection first (includes cache columns from migration 011).
-        params_full = {
-            **base_filter,
-            "select": (
-                "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
-                "petitioner,respondent,case_details_json,case_details_last_fetched"
-            ),
-        }
-        resp = requests.get(
-            f"{SUPABASE_URL}/rest/v1/today_matched_listings",
-            headers=_sb_headers("count=none"),
-            params=params_full,
-            timeout=30,
-        )
-        if not resp.ok and resp.status_code == 400:
-            # Fallback for DBs where cache columns are not migrated yet.
-            params_base = {
-                **base_filter,
-                "select": (
-                    "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
-                    "petitioner,respondent"
-                ),
-            }
-            resp = requests.get(
+        listing: Optional[Dict[str, Any]] = None
+
+        def _fetch_listing(select_expr: str) -> requests.Response:
+            return requests.get(
                 f"{SUPABASE_URL}/rest/v1/today_matched_listings",
                 headers=_sb_headers("count=none"),
-                params=params_base,
+                params={**base_filter, "select": select_expr},
                 timeout=30,
             )
-        resp.raise_for_status()
-        rows = resp.json()
-        if not rows:
+
+        # Attempt full projection first.
+        resp = _fetch_listing(
+            "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
+            "petitioner,respondent,case_details_json,case_details_last_fetched"
+        )
+
+        # Fallback to base projection if DB hasn't applied cache migration or query is rejected.
+        if not resp.ok and resp.status_code == 400:
+            resp = _fetch_listing(
+                "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
+                "petitioner,respondent"
+            )
+
+        if resp.ok:
+            rows = resp.json()
+            if isinstance(rows, list) and rows:
+                listing = rows[0]
+
+        # Last-resort fallback: continue with synthetic listing if we at least have caseId.
+        if listing is None and case_id:
+            listing = {
+                "id": listing_id,
+                "case_id": case_id,
+                "case_number": "",
+                "cnr_number": "",
+                "court_hall": "",
+                "judge_name": "",
+                "stage": "",
+                "petitioner": "",
+                "respondent": "",
+                "case_details_json": None,
+                "case_details_last_fetched": None,
+            }
+
+        if listing is None:
             return None, None, "Listing not found."
-        listing = rows[0]
 
         actual_case_id = _clean(listing.get("case_id") or case_id)
         if not actual_case_id:
@@ -362,8 +374,8 @@ def _supabase_get_listing_case(
             return None, None, "Case details not found for this listing."
 
         return listing, case_row, None
-    except Exception as exc:
-        return None, None, f"Unable to load listing details: {exc}"
+    except Exception:
+        return None, None, "Unable to load listing details"
 
 
 def _patch_case(case_id: str, patch: Dict[str, Any]) -> Optional[str]:
