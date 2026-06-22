@@ -157,7 +157,7 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") {
       return new Response(
         JSON.stringify({ success: false, message: "Method not allowed" }),
-        { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
     if (!case_id) {
       return new Response(
         JSON.stringify({ success: false, message: "case_id is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -184,7 +184,7 @@ Deno.serve(async (req) => {
     if (caseErr || !caseRow) {
       return new Response(
         JSON.stringify({ success: false, message: "Case not found in database." }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -205,7 +205,7 @@ Deno.serve(async (req) => {
       if (!effectiveCaseNumber) {
         return new Response(
           JSON.stringify({ success: false, message: "No CNR and no case number available for search." }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 
@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
       if (!searchResult || !searchResult.cino) {
         return new Response(
           JSON.stringify({ success: false, message: "Case not found in eCourtsIndia. Please verify the case number." }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 
@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
     if (!ecCase) {
       return new Response(
         JSON.stringify({ success: false, message: "Unable to retrieve case details from eCourtsIndia." }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -260,7 +260,7 @@ Deno.serve(async (req) => {
     const message = err instanceof Error ? err.message : "Internal server error";
     return new Response(
       JSON.stringify({ success: false, message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });
