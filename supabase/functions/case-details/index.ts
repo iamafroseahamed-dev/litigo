@@ -1,427 +1,711 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
-const ECOURTS_API_BASE = Deno.env.get("ECOURTS_API_BASE_URL") ?? "";
-const ECOURTS_API_KEY = Deno.env.get("ECOURTS_API_KEY") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-const CACHE_TTL_HOURS = 24;
 const JSON_HEADERS = { ...corsHeaders, "Content-Type": "application/json" };
 
-// ── Madras High Court scope ───────────────────────────────────────────────────
-// This application is exclusively for Madras High Court litigation monitoring.
-const COURT_TYPE = "HIGH_COURT";
-const HIGH_COURT_CODE = "HCMA01";
-// Court-complex code shared by every Madras High Court establishment
-// (HCMA01 = Principal Seat at Chennai, HCMA02 = Madurai Bench, etc.).
-const HIGH_COURT_COMPLEX = "HCMA";
-const STATE_CODE = "TN";
+const ECOURTS_BASE_URL = "https://hcservices.ecourts.gov.in";
+const ECOURTS_ROOT_URL = `${ECOURTS_BASE_URL}/`;
+const ECOURTS_MAIN_URL = `${ECOURTS_BASE_URL}/hcservices/main.php?v=1`;
+const ECOURTS_CAPTCHA_URL = `${ECOURTS_BASE_URL}/hcservices/securimage/securimage_show.php`;
+const ECOURTS_SEARCH_URL = `${ECOURTS_BASE_URL}/hcservices/cases_qry/index_qry.php?action_code=showRecords`;
+const ECOURTS_HISTORY_URL = `${ECOURTS_BASE_URL}/hcservices/cases_qry/o_civil_case_history.php`;
 
-// Madras High Court case-type → eCourts case category.
-const CASE_TYPE_MAP: Record<string, string> = {
-  WP: "WRIT",
-  WMP: "WRIT",
-  WA: "WRIT",
-  HCP: "CRIMINAL",
-  CMA: "CIVIL",
-  CMP: "CIVIL",
-  CRP: "REVISION",
-  CONTP: "CONTEMPT",
-  OP: "CIVIL",
-  OSA: "APPEAL",
+const REQUEST_TIMEOUT_MS = 25_000;
+const CAPTCHA_TOKEN_TTL_MS = 10 * 60 * 1000;
+const CACHE_TTL_HOURS = 24;
+
+const CASE_TYPE_IDS: Record<string, string> = {
+  WP: "49",
+  WMP: "133",
+  WA: "48",
+  WAMP: "132",
+  WPMP: "134",
+  CRP: "15",
+  CMP: "113",
+  CMA: "2",
+  HCP: "22",
+  "CONT P": "9",
+  OP: "119",
+  OSA: "120",
 };
 
-// Normalize eCourts stage values to a consistent set used across all modules
-// (daily_cause_list.stage_name, cases.case_status, today_matched_listings.stage).
-const STAGE_MAP: Record<string, string> = {
-  FOR_ADMISSION: "For Admission",
-  PART_HEARD: "Part Heard",
-  FOR_ORDERS: "For Orders",
-  FOR_JUDGMENT: "For Judgment",
-  DISPOSED: "Disposed",
-  PENDING: "Pending",
+type AnyRec = Record<string, unknown>;
+
+type ParsedCaseNumber = {
+  caseType: string;
+  caseNo: string;
+  caseYear: string;
 };
 
-function mapCaseCategory(caseType: string): string {
-  return CASE_TYPE_MAP[caseType.trim().toUpperCase()] ?? "OTHER";
+type CaseDbRow = {
+  id: string;
+  case_number: string | null;
+  cnr_number: string | null;
+  ecourts_case_no: string | null;
+  cnr_discovered_at: string | null;
+  petitioner: string | null;
+  respondent: string | null;
+  case_details_json: AnyRec | null;
+  case_details_last_fetched: string | null;
+};
+
+type CaptchaTokenPayload = {
+  cookies: Array<{ name: string; value: string }>;
+  expiresAt: number;
+};
+
+function clean(v: unknown): string {
+  return String(v ?? "").trim().replace(/\s+/g, " ");
 }
 
-function normalizeStage(stage: string | null | undefined): string {
-  if (!stage) return "";
-  const key = stage.trim().toUpperCase().replace(/\s+/g, "_");
-  return STAGE_MAP[key] ?? stage.trim();
-}
-
-function isMadrasHighCourtCnr(cnr: string): boolean {
-  return cnr.trim().toUpperCase().startsWith(HIGH_COURT_COMPLEX);
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function jsonResponse(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
-
-interface EcourtsCase {
-  cino: string;
-  case_no: string;
-  case_type: string;
-  reg_no: string;
-  reg_year: string;
-  filing_no?: string;
-  filing_date?: string;
-  reg_date?: string;
-  court_name?: string;
-  court_no?: string;
-  state_name?: string;
-  dist_name?: string;
-  case_status?: string;
-  disposal_date?: string;
-  disposal_nature?: string;
-  next_hearing_date?: string;
-  petitioner?: string[];
-  respondent?: string[];
-  pet_adv?: string[];
-  res_adv?: string[];
-  judges?: string[];
-  judge?: string[];
-  hearing_history?: Array<{
-    hearing_date: string;
-    purpose: string;
-    business_date?: string;
-    remarks?: string;
-  }>;
-  orders?: Array<{
-    order_date: string;
-    order_no?: string;
-    order_type?: string;
-    order_url?: string;
-  }>;
-  acts?: string[];
-}
-
-interface SearchResult {
-  cino: string;
-  case_no: string;
-  case_type?: string;
-  petitioner?: string;
-  respondent?: string;
-}
-
-function isCacheFresh(lastFetched: string | null): boolean {
-  if (!lastFetched) return false;
-  const ts = new Date(lastFetched).getTime();
-  if (isNaN(ts)) return false;
-  return Date.now() - ts < CACHE_TTL_HOURS * 60 * 60 * 1000;
-}
-
-function parseCaseNumber(caseNumber: string): { type: string; number: string; year: string } | null {
+function parseCaseNumber(caseNumber: string): ParsedCaseNumber | null {
   const cleaned = caseNumber.replace(/\s+/g, "").toUpperCase();
   const parts = cleaned.split("/").filter(Boolean);
   if (parts.length !== 3) return null;
-  const type = parts[0];
-  const num = parts[1].replace(/\D/g, "");
-  const year = parts[2].replace(/\D/g, "");
-  if (!type || !num || !year) return null;
-  return { type, number: num, year };
+
+  const rawType = parts[0].replace(/_/g, " ").replace(/\./g, " ").trim();
+  const caseType = rawType.replace(/\s+/g, " ");
+  const caseNo = parts[1].replace(/\D/g, "");
+  const caseYear = parts[2].replace(/\D/g, "");
+
+  if (!caseType || !caseNo || !caseYear) return null;
+  return { caseType, caseNo, caseYear };
 }
 
-async function fetchCaseByDnr(cnr: string): Promise<{ data: EcourtsCase | null; status: number; body: string; url: string }> {
-  const url = `${ECOURTS_API_BASE}/api/partner/case/${encodeURIComponent(cnr)}`;
-  console.log("[eCourts] GET", url);
-  const resp = await fetch(url, {
-    headers: {
-      "Authorization": `Bearer ${ECOURTS_API_KEY}`,
-      "Accept": "application/json",
-    },
-  });
-  const body = await resp.text();
-  console.log("[eCourts] Response status:", resp.status);
-  console.log("[eCourts] Response body:", body.slice(0, 1000));
-  if (!resp.ok) return { data: null, status: resp.status, body, url };
+function resolveCaseTypeId(caseType: string): string | null {
+  const upper = caseType.toUpperCase();
+  if (CASE_TYPE_IDS[upper]) return CASE_TYPE_IDS[upper];
+  const squeezed = upper.replace(/\s+/g, "");
+  if (CASE_TYPE_IDS[squeezed]) return CASE_TYPE_IDS[squeezed];
+
+  if (squeezed === "CONTP") return CASE_TYPE_IDS["CONT P"];
+  return null;
+}
+
+function jsonResponse(body: AnyRec, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+}
+
+function isCacheFresh(lastFetched: string | null | undefined): boolean {
+  if (!lastFetched) return false;
+  const ts = new Date(lastFetched).getTime();
+  if (Number.isNaN(ts)) return false;
+  return Date.now() - ts < CACHE_TTL_HOURS * 60 * 60 * 1000;
+}
+
+function parseSetCookie(raw: string | null): Array<{ name: string; value: string }> {
+  if (!raw) return [];
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const out: Array<{ name: string; value: string }> = [];
+  for (const line of lines) {
+    const firstPart = line.split(";")[0] ?? "";
+    const eq = firstPart.indexOf("=");
+    if (eq <= 0) continue;
+    const name = firstPart.slice(0, eq).trim();
+    const value = firstPart.slice(eq + 1).trim();
+    if (!name) continue;
+    out.push({ name, value });
+  }
+  return out;
+}
+
+function encodeCaptchaToken(payload: CaptchaTokenPayload): string {
+  return btoa(JSON.stringify(payload));
+}
+
+function decodeCaptchaToken(token: string): CaptchaTokenPayload | null {
   try {
-    return { data: JSON.parse(body) as EcourtsCase, status: resp.status, body, url };
+    const raw = atob(token);
+    const parsed = JSON.parse(raw) as CaptchaTokenPayload;
+    if (!Array.isArray(parsed.cookies) || typeof parsed.expiresAt !== "number") {
+      return null;
+    }
+    return parsed;
   } catch {
-    return { data: null, status: resp.status, body, url };
+    return null;
   }
 }
 
-async function searchCase(caseNumber: string): Promise<{ result: SearchResult | null; status: number; body: string; url: string }> {
-  const parsed = parseCaseNumber(caseNumber);
-  if (!parsed) return { result: null, status: 0, body: "Failed to parse case number", url: "" };
+function cookieHeaderFromToken(token: string): string | null {
+  const payload = decodeCaptchaToken(token);
+  if (!payload) return null;
+  if (Date.now() > payload.expiresAt) return null;
 
-  const url = `${ECOURTS_API_BASE}/api/partner/search`;
-  const payload = {
-    case_type: parsed.type,
-    case_number: parsed.number,
-    year: parsed.year,
-    state_code: "33",
-    court_code: "1",
-  };
-  console.log("[eCourts] POST", url, JSON.stringify(payload));
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${ECOURTS_API_KEY}`,
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const body = await resp.text();
-  console.log("[eCourts] Search status:", resp.status);
-  console.log("[eCourts] Search body:", body.slice(0, 1000));
-  if (!resp.ok) return { result: null, status: resp.status, body, url };
+  const parts = payload.cookies
+    .filter((c) => c.name && c.value)
+    .map((c) => `${c.name}=${c.value}`);
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
+async function readText(resp: Response): Promise<string> {
   try {
-    const data = JSON.parse(body);
-    const results: SearchResult[] = Array.isArray(data) ? data : data?.results ?? data?.con ?? [];
-    return { result: results.length > 0 ? results[0] : null, status: resp.status, body, url };
+    return await resp.text();
   } catch {
-    return { result: null, status: resp.status, body, url };
+    return "";
   }
 }
 
-function buildCaseDetails(ecCase: EcourtsCase, caseTypeHint?: string) {
-  const caseType = (caseTypeHint ?? ecCase.case_type ?? "").toUpperCase();
-  const caseCategory = mapCaseCategory(caseType);
+function titleToCamel(title: string): string {
+  const words = clean(title)
+    .replace(/[^a-zA-Z0-9 ]+/g, " ")
+    .split(" ")
+    .filter(Boolean);
+  if (words.length === 0) return "";
+  const [first, ...rest] = words;
+  return first.toLowerCase() + rest.map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase()).join("");
+}
 
-  const orders = (ecCase.orders ?? []).map((o) => ({
-    orderDate: o.order_date ?? "",
-    orderNumber: o.order_no ?? "",
-    orderType: o.order_type ?? "",
-    orderUrl: o.order_url ?? "",
-  }));
-  const judgmentCount = orders.filter((o) => /JUDG/i.test(o.orderType)).length;
+function extractSummaryFields(text: string): AnyRec {
+  const out: AnyRec = {};
+  const rows = text.split("\n").map((l) => clean(l)).filter(Boolean);
 
-  const hearingHistory = (ecCase.hearing_history ?? []).map((h) => ({
-    date: h.hearing_date ?? "",
-    purpose: h.purpose ?? "",
-    businessDate: h.business_date ?? "",
-    remarks: h.remarks ?? "",
-  }));
+  for (const row of rows) {
+    if (!row.includes(":")) continue;
+    const idx = row.indexOf(":");
+    const key = clean(row.slice(0, idx));
+    const value = clean(row.slice(idx + 1));
+    if (!key || !value) continue;
+    const k = titleToCamel(key);
+    if (k) out[k] = value;
+  }
 
-  const judges = ecCase.judges ?? ecCase.judge ?? [];
+  return out;
+}
+
+function extractHearingHistory(text: string): Array<AnyRec> {
+  const out: Array<AnyRec> = [];
+  const lines = text.split("\n").map((l) => clean(l)).filter(Boolean);
+
+  const dateRegex = /(\d{2}[-/.]\d{2}[-/.]\d{4}|\d{4}[-/.]\d{2}[-/.]\d{2})/;
+
+  for (const line of lines) {
+    if (!dateRegex.test(line)) continue;
+    if (!/(hearing|purpose|stage|business|remarks|order)/i.test(line)) continue;
+
+    const parts = line.split(/\s{2,}|\t+/).map((p) => clean(p)).filter(Boolean);
+    if (parts.length < 2) continue;
+
+    const date = parts.find((p) => dateRegex.test(p)) ?? "";
+    const purpose = parts.length > 1 ? parts[1] : "";
+    const stage = parts.length > 2 ? parts[2] : "";
+    const remarks = parts.length > 3 ? parts.slice(3).join(" ") : "";
+
+    out.push({ date, purpose, stage, remarks });
+  }
+
+  return out;
+}
+
+function extractOrders(text: string): Array<AnyRec> {
+  const out: Array<AnyRec> = [];
+  const lines = text.split("\n").map((l) => clean(l)).filter(Boolean);
+
+  const pdfRegex = /(https?:\/\/\S+\.pdf\S*)/i;
+  const dateRegex = /(\d{2}[-/.]\d{2}[-/.]\d{4}|\d{4}[-/.]\d{2}[-/.]\d{2})/;
+
+  for (const line of lines) {
+    if (!/(order|judgment|pdf|download)/i.test(line)) continue;
+
+    const orderUrlMatch = line.match(pdfRegex);
+    const orderUrl = orderUrlMatch ? orderUrlMatch[1] : "";
+
+    const dateMatch = line.match(dateRegex);
+    const orderDate = dateMatch ? dateMatch[1] : "";
+
+    const orderType = /judgment/i.test(line)
+      ? "Judgment"
+      : /interim/i.test(line)
+      ? "Interim Order"
+      : "Order";
+
+    const orderNumberMatch = line.match(/order\s*no\.?\s*[:\-]?\s*([A-Za-z0-9/.-]+)/i);
+    const orderNumber = orderNumberMatch ? orderNumberMatch[1] : "";
+
+    if (!orderDate && !orderUrl && !orderNumber) continue;
+
+    out.push({ orderDate, orderNumber, orderType, orderUrl });
+  }
+
+  return out;
+}
+
+function normalizeCaseDetails(opts: {
+  caseNumber: string;
+  cnrNumber: string;
+  ecourtsCaseNo: string;
+  listing?: AnyRec | null;
+  caseRow?: AnyRec | null;
+  htmlText: string;
+}): AnyRec {
+  const summary = extractSummaryFields(opts.htmlText);
+  const hearings = extractHearingHistory(opts.htmlText);
+  const orders = extractOrders(opts.htmlText);
+
+  const petitioner = clean(
+    summary.petitioner ?? opts.listing?.petitioner ?? opts.caseRow?.petitioner,
+  );
+  const respondent = clean(
+    summary.respondent ?? opts.listing?.respondent ?? opts.caseRow?.respondent,
+  );
+  const stage = clean(summary.stageOfCase ?? summary.caseStatus ?? opts.listing?.stage);
+
+  const judge = clean(summary.coram ?? summary.judge ?? opts.listing?.judge_name);
+  const courtHall = clean(summary.courtHall ?? summary.courtNo ?? opts.listing?.court_hall);
+  const nextHearingDate = clean(summary.nextDate ?? summary.nextHearingDate);
 
   return {
-    caseNumber: ecCase.case_no ?? `${ecCase.case_type}/${ecCase.reg_no}/${ecCase.reg_year}`,
-    cnrNumber: ecCase.cino ?? "",
-    courtType: COURT_TYPE,
-    highCourtCode: HIGH_COURT_CODE,
-    stateCode: STATE_CODE,
-    courtName: ecCase.court_name ?? "Madras High Court",
-    district: ecCase.dist_name ?? null,
-    caseCategory,
-    caseStatus: normalizeStage(ecCase.case_status),
-    nextHearingDate: ecCase.next_hearing_date ?? null,
-    petitioners: ecCase.petitioner ?? [],
-    respondents: ecCase.respondent ?? [],
-    petitionerAdvocates: ecCase.pet_adv ?? [],
-    respondentAdvocates: ecCase.res_adv ?? [],
-    judges,
-    hearingHistory,
-    hearingCount: hearingHistory.length,
+    caseNumber: opts.caseNumber,
+    cnrNumber: opts.cnrNumber,
+    ecourtsCaseNo: opts.ecourtsCaseNo,
+    caseStatus: clean(summary.caseStatus),
+    stage,
+    petitioner,
+    respondent,
+    judge,
+    courtHall,
+    nextHearingDate: nextHearingDate || null,
+    hearingHistory: hearings,
     orders,
-    orderCount: orders.length,
-    judgmentCount,
-    filingDate: ecCase.filing_date ?? null,
-    registrationDate: ecCase.reg_date ?? null,
-    disposalDate: ecCase.disposal_date ?? null,
-    disposalNature: ecCase.disposal_nature ?? null,
-    acts: ecCase.acts ?? [],
+    summary,
+    source: "hcservices.ecourts.gov.in",
+    fetchedAt: new Date().toISOString(),
   };
 }
 
-// ── Handler ─────────────────────────────────────────────────────────────────
+async function ensureCaseColumns(supabase: ReturnType<typeof createClient>, caseId: string): Promise<void> {
+  const patch: AnyRec = { updated_at: new Date().toISOString() };
+  const { error } = await supabase.from("cases").update(patch).eq("id", caseId);
+  if (error) {
+    const msg = String(error.message ?? "");
+    if (msg.includes("ecourts_case_no") || msg.includes("column")) {
+      throw new Error(
+        "Missing DB column ecourts_case_no on cases. Add it via migration before using case-details discovery flow.",
+      );
+    }
+  }
+}
+
+async function getCaseRow(
+  supabase: ReturnType<typeof createClient>,
+  payload: AnyRec,
+): Promise<{ caseRow: CaseDbRow; listingRow: AnyRec | null }> {
+  const caseId = clean(payload.caseId ?? payload.case_id);
+  const listingId = clean(payload.listingId ?? payload.listing_id);
+  const caseNumberFromPayload = clean(payload.caseNumber ?? payload.case_number).toUpperCase();
+
+  let listingRow: AnyRec | null = null;
+
+  if (listingId) {
+    const { data, error } = await supabase
+      .from("today_matched_listings")
+      .select("id,case_id,case_number,petitioner,respondent,stage,judge_name,court_hall")
+      .eq("id", listingId)
+      .maybeSingle();
+    if (!error && data) listingRow = data as AnyRec;
+  }
+
+  let query = supabase
+    .from("cases")
+    .select("id,case_number,cnr_number,ecourts_case_no,cnr_discovered_at,petitioner,respondent,case_details_json,case_details_last_fetched");
+
+  if (caseId) {
+    query = query.eq("id", caseId);
+  } else if (listingRow?.case_id) {
+    query = query.eq("id", String(listingRow.case_id));
+  } else if (caseNumberFromPayload) {
+    query = query.eq("case_number", caseNumberFromPayload);
+  } else {
+    throw new Error("caseId, listingId, or caseNumber is required");
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error || !data) {
+    throw new Error("Case not found in database");
+  }
+
+  return { caseRow: data as CaseDbRow, listingRow };
+}
+
+async function createCaptchaChallenge(): Promise<AnyRec> {
+  const rootResp = await fetch(ECOURTS_ROOT_URL, {
+    method: "GET",
+    headers: { "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const rootSetCookie = rootResp.headers.get("set-cookie");
+
+  const mainResp = await fetch(ECOURTS_MAIN_URL, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Referer: ECOURTS_ROOT_URL,
+      Cookie: parseSetCookie(rootSetCookie).map((c) => `${c.name}=${c.value}`).join("; "),
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const mainSetCookie = mainResp.headers.get("set-cookie");
+
+  const cookies = [
+    ...parseSetCookie(rootSetCookie),
+    ...parseSetCookie(mainSetCookie),
+  ];
+  const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+
+  const captchaResp = await fetch(`${ECOURTS_CAPTCHA_URL}?${Math.random()}`, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Referer: ECOURTS_MAIN_URL,
+      "X-Requested-With": "XMLHttpRequest",
+      Cookie: cookieHeader,
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  if (!captchaResp.ok) {
+    throw new Error(`Failed to fetch captcha image (${captchaResp.status})`);
+  }
+
+  const finalSetCookie = captchaResp.headers.get("set-cookie");
+  const mergedCookies = [...cookies, ...parseSetCookie(finalSetCookie)];
+
+  const imageBytes = new Uint8Array(await captchaResp.arrayBuffer());
+  const binary = Array.from(imageBytes, (b) => String.fromCharCode(b)).join("");
+  const imageB64 = btoa(binary);
+  const mime = captchaResp.headers.get("content-type") ?? "image/png";
+
+  const token = encodeCaptchaToken({
+    cookies: mergedCookies,
+    expiresAt: Date.now() + CAPTCHA_TOKEN_TTL_MS,
+  });
+
+  return {
+    requiresCaptcha: true,
+    message: "Captcha Required",
+    captchaImage: `data:${mime};base64,${imageB64}`,
+    captchaToken: token,
+  };
+}
+
+async function searchCaseFromCaptcha(args: {
+  caseNumber: string;
+  captcha: string;
+  captchaToken: string;
+}): Promise<{ ecourtsCaseNo: string; cnrNumber: string }> {
+  const parsed = parseCaseNumber(args.caseNumber);
+  if (!parsed) {
+    throw new Error("Unable to parse case number. Expected TYPE/NUMBER/YEAR.");
+  }
+
+  const caseTypeId = resolveCaseTypeId(parsed.caseType);
+  if (!caseTypeId) {
+    throw new Error(`Case type mapping not available for '${parsed.caseType}'.`);
+  }
+
+  const cookieHeader = cookieHeaderFromToken(args.captchaToken);
+  if (!cookieHeader) {
+    throw new Error("Captcha session expired. Please refresh captcha.");
+  }
+
+  const form = new URLSearchParams();
+  form.set("court_code", "1");
+  form.set("state_code", "10");
+  form.set("court_complex_code", "1");
+  form.set("caseStatusSearchType", "COcaseNumber");
+  form.set("captcha", args.captcha);
+  form.set("case_type_order", caseTypeId);
+  form.set("case_no_order", parsed.caseNo);
+  form.set("rgyearCaseOrder", parsed.caseYear);
+
+  const resp = await fetch(ECOURTS_SEARCH_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "User-Agent": "Mozilla/5.0",
+      Origin: ECOURTS_BASE_URL,
+      Referer: ECOURTS_MAIN_URL,
+      "X-Requested-With": "XMLHttpRequest",
+      Cookie: cookieHeader,
+    },
+    body: form,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  const bodyText = await readText(resp);
+
+  if (!resp.ok) {
+    throw new Error(`eCourts search failed (${resp.status})`);
+  }
+
+  const lower = bodyText.toLowerCase();
+  if (lower.includes("captcha") && (
+    lower.includes("invalid") || lower.includes("incorrect") || lower.includes("wrong")
+  )) {
+    throw new Error("Invalid Captcha");
+  }
+
+  let parsedJson: AnyRec | AnyRec[] | null = null;
+  try {
+    parsedJson = JSON.parse(bodyText) as AnyRec | AnyRec[];
+  } catch {
+    parsedJson = null;
+  }
+
+  const records = Array.isArray(parsedJson)
+    ? parsedJson
+    : Array.isArray(parsedJson?.con)
+    ? parsedJson.con as AnyRec[]
+    : Array.isArray(parsedJson?.results)
+    ? parsedJson.results as AnyRec[]
+    : [];
+
+  const first = records[0] ?? null;
+  const ecourtsCaseNo = clean(first?.case_no ?? "");
+  const cnrNumber = clean(first?.cino ?? first?.cnr_number ?? "").toUpperCase();
+
+  if (!ecourtsCaseNo || !cnrNumber) {
+    throw new Error("Case Not Found");
+  }
+
+  return { ecourtsCaseNo, cnrNumber };
+}
+
+async function fetchCaseHistory(args: {
+  ecourtsCaseNo: string;
+  cnrNumber: string;
+}): Promise<string> {
+  const form = new URLSearchParams();
+  form.set("court_code", "1");
+  form.set("state_code", "10");
+  form.set("court_complex_code", "1");
+  form.set("case_no", args.ecourtsCaseNo);
+  form.set("cino", args.cnrNumber);
+  form.set("appFlag", "");
+
+  const resp = await fetch(ECOURTS_HISTORY_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "User-Agent": "Mozilla/5.0",
+      Referer: ECOURTS_ROOT_URL,
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: form,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  const bodyText = await readText(resp);
+
+  if (!resp.ok) {
+    throw new Error(`Unable to retrieve case details (${resp.status})`);
+  }
+
+  const lower = bodyText.toLowerCase();
+  if (
+    lower.includes("no records found") ||
+    lower.includes("case not found") ||
+    lower.includes("invalid cnr")
+  ) {
+    throw new Error("Case Not Found");
+  }
+
+  if (clean(bodyText).length < 80) {
+    throw new Error("Unable to retrieve case details");
+  }
+
+  return bodyText;
+}
+
+async function upsertDiscoveryAndCache(args: {
+  supabase: ReturnType<typeof createClient>;
+  caseId: string;
+  listingId?: string | null;
+  cnrNumber: string;
+  ecourtsCaseNo: string;
+  caseDetails: AnyRec;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  await args.supabase
+    .from("cases")
+    .update({
+      cnr_number: args.cnrNumber,
+      ecourts_case_no: args.ecourtsCaseNo,
+      cnr_discovered_at: now,
+      case_details_json: args.caseDetails,
+      case_details_last_fetched: now,
+      petitioner: clean(args.caseDetails.petitioner),
+      respondent: clean(args.caseDetails.respondent),
+      case_status: clean(args.caseDetails.caseStatus),
+      next_hearing_date: clean(args.caseDetails.nextHearingDate) || null,
+    })
+    .eq("id", args.caseId);
+
+  if (args.listingId) {
+    await args.supabase
+      .from("today_matched_listings")
+      .update({
+        case_details_json: args.caseDetails,
+        case_details_last_fetched: now,
+        cnr_number: args.cnrNumber,
+        ecourts_case_no: args.ecourtsCaseNo,
+      })
+      .eq("id", args.listingId);
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Step 1 — Parse body safely
-  let body: Record<string, unknown>;
+  if (req.method !== "POST") {
+    return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+  }
+
+  let body: AnyRec;
   try {
-    body = await req.json();
-  } catch (parseErr) {
-    const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-    console.error("[case-details] JSON parse error:", msg);
-    return jsonResponse({
-      success: false,
-      error: "Invalid JSON body",
-      detail: msg,
-      received: null,
-    });
+    body = await req.json() as AnyRec;
+  } catch {
+    return jsonResponse({ success: false, error: "Invalid JSON body" }, 400);
   }
 
-  console.log("[case-details] REQUEST", JSON.stringify(body, null, 2));
-
-  // Accept both camelCase and snake_case field names
-  const caseId = String(body.caseId ?? body.case_id ?? "").trim();
-  const caseNumber = String(body.caseNumber ?? body.case_number ?? "").trim();
-  const cnrNumber = String(body.cnrNumber ?? body.cnr_number ?? "").trim();
-
-  const received = { caseId, caseNumber, cnrNumber };
-  console.log("[case-details] Resolved params:", JSON.stringify(received));
-
-  // Step 2 — Validate
-  if (!caseId && !caseNumber) {
-    return jsonResponse({
-      success: false,
-      error: "caseId or caseNumber is required",
-      received,
-    });
-  }
-
-  // Step 3 — Check env vars
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    console.error("[case-details] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-    return jsonResponse({
-      success: false,
-      error: "Server misconfiguration: missing Supabase credentials",
-      received,
-    });
+    return jsonResponse({ success: false, error: "Server misconfiguration: missing Supabase credentials" }, 500);
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Step 4 — Lookup case in database
-  let caseRow: Record<string, unknown> | null = null;
-  let dbError: string | null = null;
+  try {
+    const { caseRow, listingRow } = await getCaseRow(supabase, body);
+    await ensureCaseColumns(supabase, caseRow.id);
 
-  if (caseId) {
-    console.log("[case-details] Looking up case by id:", caseId);
-    const { data, error } = await supabase
-      .from("cases")
-      .select("id, cnr_number, case_number, case_details_json, case_details_last_fetched, petitioner, respondent, case_status, next_hearing_date")
-      .eq("id", caseId)
-      .single();
-    caseRow = data;
-    if (error) dbError = error.message;
-  } else {
-    console.log("[case-details] Looking up case by case_number:", caseNumber);
-    const { data, error } = await supabase
-      .from("cases")
-      .select("id, cnr_number, case_number, case_details_json, case_details_last_fetched, petitioner, respondent, case_status, next_hearing_date")
-      .eq("case_number", caseNumber)
-      .single();
-    caseRow = data;
-    if (error) dbError = error.message;
-  }
+    const caseNumber = clean(body.caseNumber ?? body.case_number ?? caseRow.case_number).toUpperCase();
+    const captcha = clean(body.captcha);
+    const captchaToken = clean(body.captchaToken ?? body.captcha_token);
 
-  console.log("[case-details] DB result:", caseRow ? `found id=${caseRow.id}` : "not found", dbError ?? "");
+    const hasDiscovery = !!clean(caseRow.cnr_number) && !!clean(caseRow.ecourts_case_no);
 
-  if (!caseRow) {
-    return jsonResponse({
-      success: false,
-      error: "Case not found in database",
-      detail: dbError,
-      received,
-    });
-  }
+    // Optimization: If discovery fields already exist, skip captcha and fetch history directly.
+    if (hasDiscovery) {
+      if (caseRow.case_details_json && isCacheFresh(caseRow.case_details_last_fetched)) {
+        return jsonResponse({
+          success: true,
+          cached: true,
+          requiresCaptcha: false,
+          caseDetails: caseRow.case_details_json,
+        });
+      }
 
-  // Step 5 — Check cache (24 hours)
-  const cachedDetails = caseRow.case_details_json as Record<string, unknown> | null;
-  const lastFetched = caseRow.case_details_last_fetched as string | null;
-  if (cachedDetails && isCacheFresh(lastFetched)) {
-    console.log("[case-details] Serving from cache (fetched:", lastFetched, ")");
-    return jsonResponse({ success: true, cached: true, caseDetails: cachedDetails });
-  }
+      const historyHtml = await fetchCaseHistory({
+        ecourtsCaseNo: clean(caseRow.ecourts_case_no),
+        cnrNumber: clean(caseRow.cnr_number).toUpperCase(),
+      });
 
-  // Step 6 — Resolve CNR
-  let cnr = String(caseRow.cnr_number ?? cnrNumber ?? "").trim();
-  const effectiveCaseNumber = caseNumber || String(caseRow.case_number ?? "");
-  console.log("[case-details] CNR:", cnr || "(empty)", "| caseNumber:", effectiveCaseNumber);
+      const details = normalizeCaseDetails({
+        caseNumber: caseNumber || clean(caseRow.case_number),
+        cnrNumber: clean(caseRow.cnr_number).toUpperCase(),
+        ecourtsCaseNo: clean(caseRow.ecourts_case_no),
+        listing: listingRow,
+        caseRow,
+        htmlText: historyHtml,
+      });
 
-  if (!cnr) {
-    if (!effectiveCaseNumber) {
+      await upsertDiscoveryAndCache({
+        supabase,
+        caseId: caseRow.id,
+        listingId: clean(listingRow?.id) || null,
+        cnrNumber: clean(caseRow.cnr_number).toUpperCase(),
+        ecourtsCaseNo: clean(caseRow.ecourts_case_no),
+        caseDetails: details,
+      });
+
       return jsonResponse({
-        success: false,
-        error: "No CNR number and no case number available to search eCourtsIndia",
-        received,
-        caseRow: { id: caseRow.id, cnr_number: caseRow.cnr_number, case_number: caseRow.case_number },
+        success: true,
+        cached: false,
+        requiresCaptcha: false,
+        caseDetails: details,
       });
     }
 
-    console.log("[case-details] Searching eCourtsIndia for:", effectiveCaseNumber);
-    const search = await searchCase(effectiveCaseNumber);
-
-    if (!search.result || !search.result.cino) {
+    // First-time discovery: return captcha challenge when captcha is not submitted.
+    if (!captcha || !captchaToken) {
+      const challenge = await createCaptchaChallenge();
       return jsonResponse({
         success: false,
-        error: "Case not found in eCourtsIndia search",
-        detail: `Search API returned status ${search.status}`,
-        searchUrl: search.url,
-        searchResponse: search.body.slice(0, 500),
-        received,
+        requiresCaptcha: true,
+        ...challenge,
       });
     }
 
-    cnr = search.result.cino;
-    console.log("[case-details] Discovered CNR:", cnr);
+    if (!caseNumber) {
+      return jsonResponse({ success: false, error: "caseNumber is required" }, 400);
+    }
 
-    await supabase
-      .from("cases")
-      .update({ cnr_number: cnr, cnr_discovered_at: new Date().toISOString() })
-      .eq("id", caseRow.id);
-  }
-
-  // Step 6b — Enforce Madras High Court scope (CNR must be in the HCMA court complex)
-  if (!isMadrasHighCourtCnr(cnr)) {
-    console.warn("[case-details] Rejected non-Madras-HC CNR:", cnr);
-    return jsonResponse({
-      success: false,
-      error: "Only Madras High Court cases are supported.",
-      detail: `CNR ${cnr} is not in the ${HIGH_COURT_COMPLEX} (${COURT_TYPE}/${STATE_CODE}) court complex.`,
-      received,
+    const discovered = await searchCaseFromCaptcha({
+      caseNumber,
+      captcha,
+      captchaToken,
     });
-  }
 
-  // Step 7 — Fetch case details from eCourtsIndia
-  if (!ECOURTS_API_BASE || !ECOURTS_API_KEY) {
-    return jsonResponse({
-      success: false,
-      error: "Server misconfiguration: missing ECOURTS_API_BASE_URL or ECOURTS_API_KEY",
-      received,
+    const historyHtml = await fetchCaseHistory({
+      ecourtsCaseNo: discovered.ecourtsCaseNo,
+      cnrNumber: discovered.cnrNumber,
     });
-  }
 
-  const ecResult = await fetchCaseByDnr(cnr);
-
-  if (!ecResult.data) {
-    return jsonResponse({
-      success: false,
-      error: "eCourtsIndia API request failed",
-      detail: `GET ${ecResult.url} returned status ${ecResult.status}`,
-      apiResponse: ecResult.body.slice(0, 500),
-      cnr,
-      received,
+    const details = normalizeCaseDetails({
+      caseNumber,
+      cnrNumber: discovered.cnrNumber,
+      ecourtsCaseNo: discovered.ecourtsCaseNo,
+      listing: listingRow,
+      caseRow,
+      htmlText: historyHtml,
     });
+
+    await upsertDiscoveryAndCache({
+      supabase,
+      caseId: caseRow.id,
+      listingId: clean(listingRow?.id) || null,
+      cnrNumber: discovered.cnrNumber,
+      ecourtsCaseNo: discovered.ecourtsCaseNo,
+      caseDetails: details,
+    });
+
+    return jsonResponse({
+      success: true,
+      requiresCaptcha: false,
+      cached: false,
+      caseDetails: details,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+
+    if (message === "Invalid Captcha") {
+      try {
+        const challenge = await createCaptchaChallenge();
+        return jsonResponse({
+          success: false,
+          message,
+          requiresCaptcha: true,
+          ...challenge,
+        });
+      } catch {
+        return jsonResponse({ success: false, error: message }, 400);
+      }
+    }
+
+    if (message.includes("Case Not Found")) {
+      return jsonResponse({ success: false, error: "Case Not Found" }, 200);
+    }
+
+    return jsonResponse({ success: false, error: message }, 400);
   }
-
-  // Step 8 — Build response and save
-  const caseTypeHint = parseCaseNumber(effectiveCaseNumber)?.type ?? ecResult.data.case_type ?? "";
-  const caseDetails = buildCaseDetails(ecResult.data, caseTypeHint);
-  const now = new Date().toISOString();
-
-  const { error: updateErr } = await supabase
-    .from("cases")
-    .update({
-      case_details_json: caseDetails,
-      case_details_last_fetched: now,
-      case_details_last_synced: now,
-      case_category: caseDetails.caseCategory,
-      case_status: caseDetails.caseStatus || caseRow.case_status,
-      petitioner: ecResult.data.petitioner?.join(", ") || caseRow.petitioner,
-      respondent: ecResult.data.respondent?.join(", ") || caseRow.respondent,
-      next_hearing_date: ecResult.data.next_hearing_date || caseRow.next_hearing_date,
-    })
-    .eq("id", caseRow.id);
-
-  if (updateErr) {
-    console.warn("[case-details] DB update failed:", updateErr.message);
-  }
-
-  console.log("[case-details] Success — returning case details for CNR:", cnr);
-  return jsonResponse({ success: true, cached: false, caseDetails });
 });

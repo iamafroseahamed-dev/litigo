@@ -39,6 +39,12 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        '/hcservices-proxy': {
+          target: 'https://hcservices.ecourts.gov.in',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/hcservices-proxy/, ''),
+        },
       },
     },
   };
