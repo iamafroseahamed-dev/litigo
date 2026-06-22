@@ -792,20 +792,33 @@ class handler(BaseHTTPRequestHandler):
         captcha = _clean((query.get("captcha") or [""])[0])
         captcha_token = _clean((query.get("captchaToken") or query.get("captcha_token") or [""])[0])
 
-        if not case_id and not listing_id:
+        if not case_id and not listing_id and not case_number:
             return self._json(
                 {
                     "success": False,
-                    "message": "caseId or listingId is required.",
+                    "message": "caseId, listingId, or caseNumber is required.",
                 },
                 400,
             )
 
         listing, case_row, load_err = _supabase_get_listing_case(listing_id, case_id)
         if load_err or not listing or not case_row:
-            return self._json({"success": False, "message": load_err or "Listing not found."}, 404)
+            if not case_number:
+                return self._json({"success": False, "message": load_err or "Listing not found."}, 404)
+            if not listing:
+                listing = {
+                    "id": listing_id, "case_id": case_id, "case_number": case_number,
+                    "cnr_number": "", "court_hall": "", "judge_name": "", "stage": "",
+                    "petitioner": "", "respondent": "",
+                    "case_details_json": None, "case_details_last_fetched": None,
+                }
+            if not case_row:
+                case_row = {
+                    "id": case_id, "case_number": case_number, "cnr_number": "",
+                    "ecourts_case_no": "", "petitioner": "", "respondent": "",
+                }
 
-        if case_id and _clean(case_row.get("id")) != case_id:
+        if case_id and case_row and _clean(case_row.get("id")) != case_id:
             return self._json({"success": False, "message": "caseId does not match listing."}, 400)
 
         details, err, challenge = _handle_case_details_flow(
@@ -836,20 +849,33 @@ class handler(BaseHTTPRequestHandler):
         captcha = _clean(data.get("captcha") or "")
         captcha_token = _clean(data.get("captchaToken") or data.get("captcha_token") or "")
 
-        if not case_id and not listing_id:
+        if not case_id and not listing_id and not case_number:
             return self._json(
                 {
                     "success": False,
-                    "message": "caseId or listingId is required.",
+                    "message": "caseId, listingId, or caseNumber is required.",
                 },
                 400,
             )
 
         listing, case_row, load_err = _supabase_get_listing_case(listing_id, case_id)
         if load_err or not listing or not case_row:
-            return self._json({"success": False, "message": load_err or "Listing not found."}, 404)
+            if not case_number:
+                return self._json({"success": False, "message": load_err or "Listing not found."}, 404)
+            if not listing:
+                listing = {
+                    "id": listing_id, "case_id": case_id, "case_number": case_number,
+                    "cnr_number": "", "court_hall": "", "judge_name": "", "stage": "",
+                    "petitioner": "", "respondent": "",
+                    "case_details_json": None, "case_details_last_fetched": None,
+                }
+            if not case_row:
+                case_row = {
+                    "id": case_id, "case_number": case_number, "cnr_number": "",
+                    "ecourts_case_no": "", "petitioner": "", "respondent": "",
+                }
 
-        if case_id and _clean(case_row.get("id")) != case_id:
+        if case_id and case_row and _clean(case_row.get("id")) != case_id:
             return self._json({"success": False, "message": "caseId does not match listing."}, 400)
 
         details, err, challenge = _handle_case_details_flow(
