@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import re
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
@@ -26,7 +27,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 ECOURTS_BASE_URL = "https://hcservices.ecourts.gov.in"
+ECOURTS_ROOT_URL = f"{ECOURTS_BASE_URL}/"
 ECOURTS_MAIN_URL = f"{ECOURTS_BASE_URL}/hcservices/main.php?v=1"
+ECOURTS_CAPTCHA_URL = f"{ECOURTS_BASE_URL}/hcservices/securimage/securimage_show.php"
 ECOURTS_CASE_URL = (
     f"{ECOURTS_BASE_URL}/hcservices/cases_qry/index_qry.php?action_code=showRecords"
 )
