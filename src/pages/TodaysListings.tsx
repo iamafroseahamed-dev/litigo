@@ -4,11 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -16,20 +11,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ChevronLeft, ChevronRight, Loader2, RefreshCw, X,
+  ChevronLeft, ChevronRight, RefreshCw, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TodayMatchedListing } from '@/types';
-import {
-  loadShowRecordsCaptcha,
-  submitShowRecordsCaptcha,
-  type EcourtsCaptchaChallenge,
-  type EcourtsCaseDetails,
-  type EcourtsHearingRecord,
-  type EcourtsOrderRecord,
-  type EcourtsParsedCaseHistory,
-  EcourtsError,
-} from '@/services/ecourtsFrontendApi';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -91,19 +76,6 @@ export default function TodaysListingsPage() {
   const [sortField, setSortField] = useState<SortField>('court_hall');
   const [sortDir,   setSortDir  ] = useState<SortDir>('asc');
   const [page, setPage]           = useState(1);
-  const [isCaptchaDialogOpen, setIsCaptchaDialogOpen] = useState(false);
-  const [detailsLoading, setDetailsLoading] = useState(false);
-  const [detailsError, setDetailsError] = useState<string | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<TodayMatchedListing | null>(null);
-  const [captchaChallenge, setCaptchaChallenge] = useState<EcourtsCaptchaChallenge | null>(null);
-  const [parsedCaseHistory, setParsedCaseHistory] = useState<EcourtsParsedCaseHistory | null>(null);
-  const [captchaImageUrl, setCaptchaImageUrl] = useState<string | null>(null);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const [captchaValue, setCaptchaValue] = useState('');
-  const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
-  const [detailsPhase, setDetailsPhase] = useState<string | null>(null);
-  const [detailsTab, setDetailsTab] = useState<'overview' | 'hearings' | 'orders' | 'debug' | 'raw'>('overview');
-
   // ── Data loading ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -216,87 +188,6 @@ export default function TodaysListingsPage() {
   function SortIcon({ field }: { field: SortField }) {
     if (sortField !== field) return <span className="ml-1 text-muted-foreground/40">&#8597;</span>;
     return <span className="ml-1">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>;
-  }
-
-  function toUserErrorMessage(err: unknown): string {
-    if (err instanceof EcourtsError) return err.message;
-    if (err instanceof Error) return err.message;
-    return 'Unable to load showRecords test';
-  }
-
-  const caseDetails: EcourtsCaseDetails | null = parsedCaseHistory?.caseDetails ?? null;
-  const hearingHistory: EcourtsHearingRecord[] = parsedCaseHistory?.hearingHistory ?? [];
-  const orderRecords: EcourtsOrderRecord[] = parsedCaseHistory?.orders ?? [];
-  const primaryOrder = orderRecords[0] ?? null;
-
-  function handleViewPdf(record: EcourtsOrderRecord) {
-    console.log('ORDER DATA');
-    console.log(record);
-    console.log('PDF URL');
-    console.log(record.pdfUrl);
-    window.open(record.pdfUrl, '_blank');
-  }
-
-  async function handleViewDetails(row: TodayMatchedListing) {
-    const caseNumber = (row.case_number ?? '').trim().toUpperCase();
-    if (!caseNumber) {
-      toast.error('Case number is missing for this listing.');
-      return;
-    }
-
-    setSelectedRecord(row);
-    setDetailsError(null);
-    setCaptchaChallenge(null);
-    setParsedCaseHistory(null);
-    setDetailsTab('overview');
-    setCaptchaValue('');
-    setCaptchaImageUrl(null);
-    setCaptchaToken(null);
-    setIsCaptchaDialogOpen(true);
-    setDetailsLoading(true);
-    setDetailsPhase('Loading Captcha');
-
-    try {
-      const challenge = await loadShowRecordsCaptcha(caseNumber);
-      setCaptchaChallenge(challenge);
-      setCaptchaImageUrl(challenge.captchaImage);
-      setCaptchaToken(challenge.captchaToken);
-    } catch (err) {
-      setDetailsError(toUserErrorMessage(err));
-    } finally {
-      setDetailsLoading(false);
-      setDetailsPhase(null);
-    }
-  }
-
-  async function submitCaptcha() {
-    if (!selectedRecord) return;
-    const captcha = captchaValue.trim();
-    if (!captcha) {
-      toast.error('Enter captcha to continue.');
-      return;
-    }
-
-    if (!captchaToken) {
-      toast.error('Captcha session expired. Please reopen and try again.');
-      return;
-    }
-
-    setCaptchaSubmitting(true);
-    setDetailsError(null);
-    setDetailsPhase('Loading Case History');
-    try {
-      const caseNumber = (selectedRecord.case_number ?? '').trim().toUpperCase();
-      const result = await submitShowRecordsCaptcha({ caseNumber, captchaValue: captcha, captchaToken });
-      setParsedCaseHistory(result.parsedCaseHistory);
-      setDetailsTab('overview');
-      toast.success('Case history loaded.');
-    } catch (err) {
-      setDetailsError(toUserErrorMessage(err));
-    } finally {
-      setCaptchaSubmitting(false);
-      setDetailsPhase(null);
-    }
   }
 
   return (
@@ -434,7 +325,6 @@ export default function TodaysListingsPage() {
                   <TableHead className="whitespace-nowrap">Respondent</TableHead>
                   <TableHead className="whitespace-nowrap">Judge</TableHead>
                   <TableHead className="whitespace-nowrap">Stage Status</TableHead>
-                  <TableHead className="whitespace-nowrap">Action</TableHead>
                   <TableHead className="whitespace-nowrap">Notification</TableHead>
                 </TableRow>
               </TableHeader>
@@ -442,7 +332,7 @@ export default function TodaysListingsPage() {
               <TableBody>
                 {paginated.length === 0 ? (
                   <TableRow>
-                      <TableCell colSpan={10}
+                      <TableCell colSpan={9}
                       className="py-10 text-center text-muted-foreground">
                       No records match your filters.
                     </TableCell>
@@ -500,15 +390,6 @@ export default function TodaysListingsPage() {
                           {record.stage  ?? '\u2014'}
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleViewDetails(record)}
-                          >
-                            View Details
-                          </Button>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap">
                           <NotifBadge status={record.notification_status} />
                         </TableCell>
                       </TableRow>,
@@ -542,196 +423,6 @@ export default function TodaysListingsPage() {
           )}
         </>
       )}
-
-      <Dialog
-        open={isCaptchaDialogOpen}
-        onOpenChange={(open) => {
-          setIsCaptchaDialogOpen(open);
-          if (!open) {
-            setCaptchaValue('');
-            setDetailsError(null);
-            setDetailsPhase(null);
-            setParsedCaseHistory(null);
-            setCaptchaToken(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-7xl">
-          <DialogHeader>
-            <DialogTitle>View Details Test</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="rounded-md border p-4">
-              <h3 className="text-sm font-semibold">Case Information</h3>
-              <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                <p><span className="font-medium">Case Number:</span> {caseDetails?.caseNumber || captchaChallenge?.caseNumber || selectedRecord?.case_number || '\u2014'}</p>
-                <p><span className="font-medium">CNR:</span> {caseDetails?.cnrNumber || primaryOrder?.cino || '\u2014'}</p>
-                <p><span className="font-medium">Registration Number:</span> {caseDetails?.registrationNumber || primaryOrder?.registrationNumber || '\u2014'}</p>
-                <p><span className="font-medium">Filing Number:</span> {caseDetails?.filingNumber || '\u2014'}</p>
-              </div>
-            </div>
-
-            {!parsedCaseHistory && detailsLoading && (
-              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {detailsPhase ? `${detailsPhase}...` : 'Loading captcha...'}
-              </div>
-            )}
-
-            {!parsedCaseHistory && !detailsLoading && captchaImageUrl ? (
-              <img
-                src={captchaImageUrl}
-                alt="Captcha"
-                className="h-20 rounded border bg-white p-1"
-              />
-            ) : null}
-
-            {!parsedCaseHistory && !detailsLoading && !captchaImageUrl && !detailsError ? (
-              <p className="text-sm text-muted-foreground">Captcha image unavailable.</p>
-            ) : null}
-
-            {!parsedCaseHistory && (
-              <>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Enter Captcha</label>
-                  <Input
-                    value={captchaValue}
-                    onChange={(e) => setCaptchaValue(e.target.value)}
-                    placeholder="Type captcha"
-                    className="h-9"
-                  />
-                </div>
-
-                <Button
-                  className="w-full"
-                  disabled={detailsLoading || captchaSubmitting || !captchaImageUrl}
-                  onClick={submitCaptcha}
-                >
-                  {captchaSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit'}
-                </Button>
-              </>
-            )}
-
-            {parsedCaseHistory && (
-              <Tabs value={detailsTab} onValueChange={(value) => setDetailsTab(value as typeof detailsTab)}>
-                <TabsList>
-                  <TabsTrigger value="overview">Overview</TabsTrigger>
-                  <TabsTrigger value="hearings">Hearing History</TabsTrigger>
-                  <TabsTrigger value="orders">Orders</TabsTrigger>
-                  <TabsTrigger value="debug">Debug</TabsTrigger>
-                  <TabsTrigger value="raw">Raw HTML</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="overview" className="rounded-md border p-4">
-                  <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                    <p><span className="font-medium">Case Number:</span> {caseDetails?.caseNumber || '\u2014'}</p>
-                    <p><span className="font-medium">CNR Number:</span> {caseDetails?.cnrNumber || '\u2014'}</p>
-                    <p><span className="font-medium">Case Status:</span> {caseDetails?.caseStatus || '\u2014'}</p>
-                    <p><span className="font-medium">Next Hearing Date:</span> {fmtDate(caseDetails?.nextHearingDate)}</p>
-                    <p><span className="font-medium">Petitioner:</span> {parsedCaseHistory.parties.petitioner || '\u2014'}</p>
-                    <p><span className="font-medium">Respondent:</span> {parsedCaseHistory.parties.respondent || '\u2014'}</p>
-                    <p><span className="font-medium">Judge:</span> {caseDetails?.judgeName || '\u2014'}</p>
-                    <p><span className="font-medium">Court:</span> {caseDetails?.courtNumber || '\u2014'}</p>
-                    <p><span className="font-medium">Petitioner Advocate:</span> {parsedCaseHistory.parties.petitionerAdvocate || '\u2014'}</p>
-                    <p><span className="font-medium">Respondent Advocate:</span> {parsedCaseHistory.parties.respondentAdvocate || '\u2014'}</p>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="hearings" className="rounded-md border p-4">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-left">
-                          <th className="py-2 pr-3">Date</th>
-                          <th className="py-2 pr-3">Purpose</th>
-                          <th className="py-2 pr-3">Stage</th>
-                          <th className="py-2">Remarks</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {hearingHistory.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="py-3 text-center text-muted-foreground">No hearing history found.</td>
-                          </tr>
-                        ) : (
-                          hearingHistory.map((hearing, index) => (
-                            <tr key={`${hearing.hearingDate}-${index}`} className="border-b last:border-0">
-                              <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(hearing.hearingDate)}</td>
-                              <td className="py-2 pr-3">{hearing.purpose || '\u2014'}</td>
-                              <td className="py-2 pr-3">{hearing.stage || '\u2014'}</td>
-                              <td className="py-2">{hearing.remarks || '\u2014'}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="orders" className="rounded-md border p-4">
-                  <h3 className="text-sm font-semibold">Orders</h3>
-                  <div className="mt-3 overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-left">
-                          <th className="py-2 pr-3">Order Date</th>
-                          <th className="py-2 pr-3">Order No</th>
-                          <th className="py-2 pr-3">Type</th>
-                          <th className="py-2">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {orderRecords.map((record) => (
-                          <tr key={`${record.cino}-${record.orderNumber}-${record.orderDate}`} className="border-b last:border-0">
-                            <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(record.orderDate)}</td>
-                            <td className="py-2 pr-3 whitespace-nowrap">{record.orderNumber || '\u2014'}</td>
-                            <td className="py-2 pr-3">{record.documentType || '\u2014'}</td>
-                            <td className="py-2">
-                              <div className="flex flex-wrap gap-2">
-                                <Button size="sm" variant="outline" onClick={() => handleViewPdf(record)}>
-                                  View PDF
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="debug" className="rounded-md border p-3">
-                  <pre className="max-h-[700px] overflow-auto text-xs">{JSON.stringify(parsedCaseHistory, null, 2)}</pre>
-                </TabsContent>
-
-                <TabsContent value="raw" className="rounded-md border p-3">
-                  <ScrollArea className="h-[700px]">
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: parsedCaseHistory.rawHtml,
-                      }}
-                    />
-                  </ScrollArea>
-                </TabsContent>
-              </Tabs>
-            )}
-
-            {detailsError && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                {detailsError}
-              </div>
-            )}
-
-            {detailsPhase && captchaSubmitting && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-                {detailsPhase}...
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
