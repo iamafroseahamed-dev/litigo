@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -23,6 +25,7 @@ import {
   submitShowRecordsCaptcha,
   type EcourtsCaptchaChallenge,
   type EcourtsOrderRecord,
+  type EcourtsShowRecordsResult,
   EcourtsError,
 } from '@/services/ecourtsFrontendApi';
 
@@ -92,10 +95,12 @@ export default function TodaysListingsPage() {
   const [selectedRecord, setSelectedRecord] = useState<TodayMatchedListing | null>(null);
   const [captchaChallenge, setCaptchaChallenge] = useState<EcourtsCaptchaChallenge | null>(null);
   const [orderRecords, setOrderRecords] = useState<EcourtsOrderRecord[]>([]);
+  const [caseHistoryHtml, setCaseHistoryHtml] = useState('');
   const [captchaImageUrl, setCaptchaImageUrl] = useState<string | null>(null);
   const [captchaValue, setCaptchaValue] = useState('');
   const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
   const [detailsPhase, setDetailsPhase] = useState<string | null>(null);
+  const [detailsTab, setDetailsTab] = useState<'overview' | 'hearings' | 'orders' | 'raw'>('raw');
 
   // ── Data loading ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -250,6 +255,8 @@ export default function TodaysListingsPage() {
     setDetailsError(null);
     setCaptchaChallenge(null);
     setOrderRecords([]);
+    setCaseHistoryHtml('');
+    setDetailsTab('raw');
     setCaptchaValue('');
     setCaptchaImageUrl(null);
     setIsCaptchaDialogOpen(true);
@@ -278,11 +285,13 @@ export default function TodaysListingsPage() {
 
     setCaptchaSubmitting(true);
     setDetailsError(null);
-    setDetailsPhase('Searching Case');
+    setDetailsPhase('Loading Case History');
     try {
-      const records = await submitShowRecordsCaptcha({ captchaValue: captcha });
-      setOrderRecords(records);
-      toast.success('Order details loaded.');
+      const result: EcourtsShowRecordsResult = await submitShowRecordsCaptcha({ captchaValue: captcha });
+      setOrderRecords(result.orderRecords);
+      setCaseHistoryHtml(result.caseHistoryHtml);
+      setDetailsTab('raw');
+      toast.success('Case history HTML loaded.');
     } catch (err) {
       setDetailsError(toUserErrorMessage(err));
     } finally {
@@ -544,10 +553,11 @@ export default function TodaysListingsPage() {
             setDetailsError(null);
             setDetailsPhase(null);
             setOrderRecords([]);
+            setCaseHistoryHtml('');
           }
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-7xl">
           <DialogHeader>
             <DialogTitle>View Details Test</DialogTitle>
           </DialogHeader>
@@ -605,51 +615,67 @@ export default function TodaysListingsPage() {
             )}
 
             {orderRecords.length > 0 && (
-              <div className="rounded-md border p-4">
-                <h3 className="text-sm font-semibold">Orders</h3>
-                <div className="mt-3 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left">
-                        <th className="py-2 pr-3">Order Date</th>
-                        <th className="py-2 pr-3">Order No</th>
-                        <th className="py-2 pr-3">Type</th>
-                        <th className="py-2">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orderRecords.map((record) => (
-                        <tr key={`${record.cino}-${record.orderNumber}-${record.orderDate}`} className="border-b last:border-0">
-                          <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(record.orderDate)}</td>
-                          <td className="py-2 pr-3 whitespace-nowrap">{record.orderNumber || '\u2014'}</td>
-                          <td className="py-2 pr-3">{record.documentType || '\u2014'}</td>
-                          <td className="py-2">
-                            <div className="flex flex-wrap gap-2">
-                              <Button size="sm" variant="outline" onClick={() => handleViewPdf(record)}>
-                                View PDF
-                              </Button>
-                              <Button size="sm" onClick={() => handleDownloadPdf(record)}>
-                                Download PDF
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              <Tabs value={detailsTab} onValueChange={(value) => setDetailsTab(value as typeof detailsTab)}>
+                <TabsList>
+                  <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="hearings">Hearing History</TabsTrigger>
+                  <TabsTrigger value="orders">Orders</TabsTrigger>
+                  <TabsTrigger value="raw">Raw HTML</TabsTrigger>
+                </TabsList>
 
-                {primaryOrder && (
-                  <div className="mt-4 rounded-md border bg-muted/20 p-3 text-sm">
-                    <h4 className="font-medium">Order Information</h4>
-                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <p><span className="font-medium">Order Date:</span> {fmtDate(primaryOrder.orderDate)}</p>
-                      <p><span className="font-medium">Order Number:</span> {primaryOrder.orderNumber || '\u2014'}</p>
-                      <p><span className="font-medium">Document Type:</span> {primaryOrder.documentType || '\u2014'}</p>
-                    </div>
+                <TabsContent value="overview" className="rounded-md border p-4 text-sm text-muted-foreground">
+                  Overview parsing not implemented yet.
+                </TabsContent>
+
+                <TabsContent value="hearings" className="rounded-md border p-4 text-sm text-muted-foreground">
+                  Hearing history parsing not implemented yet.
+                </TabsContent>
+
+                <TabsContent value="orders" className="rounded-md border p-4">
+                  <h3 className="text-sm font-semibold">Orders</h3>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="py-2 pr-3">Order Date</th>
+                          <th className="py-2 pr-3">Order No</th>
+                          <th className="py-2 pr-3">Type</th>
+                          <th className="py-2">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderRecords.map((record) => (
+                          <tr key={`${record.cino}-${record.orderNumber}-${record.orderDate}`} className="border-b last:border-0">
+                            <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(record.orderDate)}</td>
+                            <td className="py-2 pr-3 whitespace-nowrap">{record.orderNumber || '\u2014'}</td>
+                            <td className="py-2 pr-3">{record.documentType || '\u2014'}</td>
+                            <td className="py-2">
+                              <div className="flex flex-wrap gap-2">
+                                <Button size="sm" variant="outline" onClick={() => handleViewPdf(record)}>
+                                  View PDF
+                                </Button>
+                                <Button size="sm" onClick={() => handleDownloadPdf(record)}>
+                                  Download PDF
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                )}
-              </div>
+                </TabsContent>
+
+                <TabsContent value="raw" className="rounded-md border p-3">
+                  <ScrollArea className="h-[700px]">
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: caseHistoryHtml,
+                      }}
+                    />
+                  </ScrollArea>
+                </TabsContent>
+              </Tabs>
             )}
 
             {detailsError && (

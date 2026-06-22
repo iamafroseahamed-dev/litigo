@@ -23,6 +23,11 @@ export type EcourtsOrderRecord = {
   pdfUrl: string;
 };
 
+export type EcourtsShowRecordsResult = {
+  orderRecords: EcourtsOrderRecord[];
+  caseHistoryHtml: string;
+};
+
 export class EcourtsError extends Error {
   code: 'INVALID_CAPTCHA' | 'SESSION_EXPIRED' | 'UNKNOWN';
 
@@ -43,36 +48,35 @@ function buildPdfUrl(record: {
   reg_year: string | number;
   cino: string;
 }): string {
-  const params = new URLSearchParams({
-    filename: clean(record.orderurlpath),
-    caseno: `${clean(record.type_name)}/${clean(record.reg_no)}/${clean(record.reg_year)}`,
-    cCode: '1',
-    appFlag: 'web',
-    normal_v: '1',
-    cino: clean(record.cino),
-    state_code: '10',
-    flag: 'nojudgement',
-  });
+  const orderUrlPath = clean(record.orderurlpath);
+  const caseNo = `${clean(record.type_name)}/${clean(record.reg_no)}/${clean(record.reg_year)}`;
+  const cino = clean(record.cino);
 
-  return `https://hcservices.ecourts.gov.in/hcservices/cases/display_pdf.php?${params.toString()}`;
+  return (
+    'https://hcservices.ecourts.gov.in/hcservices/cases/display_pdf.php' +
+    `?filename=${orderUrlPath}` +
+    `&caseno=${caseNo}` +
+    '&cCode=1' +
+    '&appFlag=web' +
+    '&normal_v=1' +
+    `&cino=${cino}` +
+    '&state_code=10' +
+    '&flag=nojudgement'
+  );
+}
+
+function hasOrderFields(value: Record<string, unknown>): boolean {
+  return [
+    'case_no',
+    'cino',
+    'orderurlpath',
+    'reg_no',
+    'reg_year',
+    'type_name',
+  ].some((key) => clean(value[key]).length > 0);
 }
 
 function parseConRecords(value: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => {
-        if (typeof entry === 'string') {
-          try {
-            return JSON.parse(entry) as Record<string, unknown>;
-          } catch {
-            return null;
-          }
-        }
-        return typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : null;
-      })
-      .filter((entry): entry is Record<string, unknown> => entry !== null);
-  }
-
   if (typeof value === 'string') {
     try {
       const parsed = JSON.parse(value) as unknown;
@@ -82,16 +86,41 @@ function parseConRecords(value: unknown): Array<Record<string, unknown>> {
     }
   }
 
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => parseConRecords(entry));
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    if (hasOrderFields(record)) {
+      return [record];
+    }
+
+    return Object.values(record).flatMap((entry) => parseConRecords(entry));
+  }
+
   return [];
 }
 
 function mapOrderRecord(record: Record<string, unknown>): EcourtsOrderRecord {
+  const orderUrlPath = clean(record.orderurlpath);
+  const typeName = clean(record.type_name);
+  const registrationNumber = clean(record.reg_no);
+  const registrationYear = clean(record.reg_year);
+  const cino = clean(record.cino);
+
+  if (!orderUrlPath || !typeName || !registrationNumber || !registrationYear || !cino) {
+    console.error('ORDER DATA MISSING REQUIRED FIELDS');
+    console.error(record);
+    throw new EcourtsError('UNKNOWN', 'showRecords returned an unexpected order shape');
+  }
+
   const pdfUrl = buildPdfUrl({
-    orderurlpath: clean(record.orderurlpath),
-    type_name: clean(record.type_name),
-    reg_no: clean(record.reg_no),
-    reg_year: clean(record.reg_year),
-    cino: clean(record.cino),
+    orderurlpath: orderUrlPath,
+    type_name: typeName,
+    reg_no: registrationNumber,
+    reg_year: registrationYear,
+    cino,
   });
 
   console.log('ORDER DATA');
@@ -101,16 +130,60 @@ function mapOrderRecord(record: Record<string, unknown>): EcourtsOrderRecord {
 
   return {
     caseNo: clean(record.case_no),
-    cino: clean(record.cino),
-    orderUrlPath: clean(record.orderurlpath),
-    registrationNumber: clean(record.reg_no),
-    registrationYear: clean(record.reg_year),
-    typeName: clean(record.type_name),
+    cino,
+    orderUrlPath,
+    registrationNumber,
+    registrationYear,
+    typeName,
     orderDate: clean(record.order_dt),
     orderNumber: clean(record.order_no),
     documentType: clean(record.docu_name),
     pdfUrl,
   };
+}
+
+async function fetchCaseHistoryHtml(showRecord: EcourtsOrderRecord): Promise<string> {
+  const payload = new URLSearchParams({
+    court_code: '1',
+    state_code: '10',
+    court_complex_code: '1',
+    case_no: showRecord.caseNo,
+    cino: showRecord.cino,
+    appFlag: '',
+  });
+
+  console.log('CASE HISTORY REQUEST');
+  console.log(payload.toString());
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${ECOURTS_PROXY_BASE}/hcservices/cases_qry/o_civil_case_history.php`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        },
+        body: payload,
+      },
+    );
+  } catch (error) {
+    console.error(error);
+    throw new EcourtsError('UNKNOWN', 'Unable to fetch case history');
+  }
+
+  const responseText = await response.text();
+  console.log('CASE HISTORY HTML');
+  console.log(responseText);
+
+  if (!response.ok) {
+    console.error(responseText);
+    throw new EcourtsError('UNKNOWN', 'Case history request failed');
+  }
+
+  return responseText;
 }
 
 async function responseToDataUrl(resp: Response): Promise<string> {
@@ -185,7 +258,7 @@ export async function loadShowRecordsCaptcha(): Promise<EcourtsCaptchaChallenge>
   };
 }
 
-export async function submitShowRecordsCaptcha(args: { captchaValue: string }): Promise<EcourtsOrderRecord[]> {
+export async function submitShowRecordsCaptcha(args: { captchaValue: string }): Promise<EcourtsShowRecordsResult> {
   const payload = new URLSearchParams({
     court_code: '1',
     state_code: '10',
@@ -231,11 +304,13 @@ export async function submitShowRecordsCaptcha(args: { captchaValue: string }): 
     const data = JSON.parse(responseText);
     console.log(data);
 
-    const records = parseConRecords(data?.con);
+    const records = parseConRecords(data?.con ?? data);
     if (records.length > 0) {
       console.log('PARSED RESULTS');
       console.log(records[0]);
-      return records.map(mapOrderRecord);
+      const orderRecords = records.map(mapOrderRecord);
+      const caseHistoryHtml = await fetchCaseHistoryHtml(orderRecords[0]);
+      return { orderRecords, caseHistoryHtml };
     }
 
     throw new EcourtsError('UNKNOWN', 'No order data returned from showRecords');
