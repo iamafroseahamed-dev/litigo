@@ -19,13 +19,10 @@ import {
 import { toast } from 'sonner';
 import type { TodayMatchedListing } from '@/types';
 import {
-  createEcourtsSession,
-  fetchEcourtsCaseHistory,
+  startCaseDetails,
+  submitCaseCaptcha,
   type EcourtsCaseDetails,
-  type EcourtsSession,
   EcourtsError,
-  loadEcourtsCaptcha,
-  searchEcourtsCase,
 } from '@/services/ecourtsFrontendApi';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -117,8 +114,7 @@ export default function TodaysListingsPage() {
   const [detailsTab, setDetailsTab] = useState<'overview' | 'hearings' | 'orders' | 'raw'>('overview');
   const [captchaImageUrl, setCaptchaImageUrl] = useState<string | null>(null);
   const [captchaValue, setCaptchaValue] = useState('');
-  const [sessionInfo, setSessionInfo] = useState<EcourtsSession | null>(null);
-  const [searchResult, setSearchResult] = useState<{ ecourtsCaseNo: string; cnrNumber: string } | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [showCaptchaModal, setShowCaptchaModal] = useState(false);
   const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
   const [detailsPhase, setDetailsPhase] = useState<string | null>(null);
@@ -273,21 +269,21 @@ export default function TodaysListingsPage() {
     setDetailsTab('overview');
     setCaptchaValue('');
     setCaptchaImageUrl(null);
-    setSessionInfo(null);
-    setSearchResult(null);
+    setCaptchaToken(null);
     setShowCaptchaModal(false);
     setIsDetailsOpen(true);
     setDetailsLoading(true);
-    setDetailsPhase('Creating Session');
+    setDetailsPhase('Loading Captcha');
 
     try {
-      const session = await createEcourtsSession();
-      setSessionInfo(session);
-
-      setDetailsPhase('Loading Captcha');
-      const captchaUrl = await loadEcourtsCaptcha();
-      setCaptchaImageUrl(captchaUrl);
-      setShowCaptchaModal(true);
+      const result = await startCaseDetails(caseNumber);
+      if (result.kind === 'captcha') {
+        setCaptchaImageUrl(result.captchaImage);
+        setCaptchaToken(result.captchaToken);
+        setShowCaptchaModal(true);
+      } else {
+        setCaseDetails(mapServiceDetails(result.details));
+      }
     } catch (err) {
       setDetailsError(toUserErrorMessage(err));
     } finally {
@@ -304,39 +300,33 @@ export default function TodaysListingsPage() {
       return;
     }
 
+    if (!captchaToken) {
+      toast.error('Captcha session expired. Please reopen and try again.');
+      return;
+    }
+
     setCaptchaSubmitting(true);
     setDetailsError(null);
     setDetailsPhase('Searching Case');
     try {
       const caseNumber = (selectedRecord.case_number ?? '').trim().toUpperCase();
-      const search = await searchEcourtsCase({ caseNumber, captcha });
-      setSearchResult({ ecourtsCaseNo: search.ecourtsCaseNo, cnrNumber: search.cnrNumber });
+      const result = await submitCaseCaptcha({ caseNumber, captcha, captchaToken });
 
-      setDetailsPhase('Fetching History');
-      const history = await fetchEcourtsCaseHistory({
-        caseNumber,
-        ecourtsCaseNo: search.ecourtsCaseNo,
-        cnrNumber: search.cnrNumber,
-      });
+      if (result.kind === 'captcha') {
+        // Wrong captcha — backend issued a fresh challenge.
+        setCaptchaImageUrl(result.captchaImage);
+        setCaptchaToken(result.captchaToken);
+        setCaptchaValue('');
+        setDetailsError('Invalid Captcha');
+        return;
+      }
 
-      setCaseDetails(mapServiceDetails(history));
+      setCaseDetails(mapServiceDetails(result.details));
       setShowCaptchaModal(false);
       setCaptchaValue('');
       toast.success('Case details loaded.');
     } catch (err) {
-      const message = toUserErrorMessage(err);
-      setDetailsError(message);
-      if (err instanceof EcourtsError && err.code === 'INVALID_CAPTCHA') {
-        try {
-          setDetailsPhase('Loading Captcha');
-          const captchaUrl = await loadEcourtsCaptcha();
-          setCaptchaImageUrl(captchaUrl);
-          setShowCaptchaModal(true);
-          setCaptchaValue('');
-        } catch {
-          // ignore refresh errors; keep the original error visible
-        }
-      }
+      setDetailsError(toUserErrorMessage(err));
     } finally {
       setCaptchaSubmitting(false);
       setDetailsPhase(null);
@@ -605,9 +595,6 @@ export default function TodaysListingsPage() {
             <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
               <span>Case Number: {selectedRecord?.case_number ?? '\u2014'}</span>
               <span>CNR Number: {caseDetails?.cnrNumber ?? selectedRecord?.cnr_number ?? '\u2014'}</span>
-              <span>Session: {sessionInfo?.sessionId ? 'Active' : '\u2014'}</span>
-              <span>JSession: {sessionInfo?.jsession ? 'Active' : '\u2014'}</span>
-              <span>eCourts Case No: {searchResult?.ecourtsCaseNo ?? '\u2014'}</span>
               <span>Case Status: {caseDetails?.caseStatus || '\u2014'}</span>
             </div>
           </DialogHeader>
