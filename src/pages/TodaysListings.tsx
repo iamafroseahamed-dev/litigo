@@ -337,6 +337,12 @@ export default function TodaysListingsPage() {
         }
       }
 
+      // Enforce Madras High Court scope: CNR must belong to HCMA01.
+      if (!resolvedCnr.trim().toUpperCase().startsWith('HCMA01')) {
+        setDetailsError('Only Madras High Court cases are supported.');
+        return;
+      }
+
       // Fetch case details by CNR via the shared eCourts service.
       let data: any;
       try {
@@ -741,6 +747,11 @@ export default function TodaysListingsPage() {
               <Eye className="h-4 w-4" />
               Case Details
             </DialogTitle>
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <Badge variant="default" className="text-[10px]">Madras High Court</Badge>
+              <Badge variant="secondary" className="text-[10px]">HCMA01</Badge>
+              <Badge variant="info" className="text-[10px]">Tamil Nadu</Badge>
+            </div>
           </DialogHeader>
 
           {detailsLoading && (

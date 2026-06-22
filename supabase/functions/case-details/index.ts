@@ -9,6 +9,51 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "
 const CACHE_TTL_HOURS = 24;
 const JSON_HEADERS = { ...corsHeaders, "Content-Type": "application/json" };
 
+// ── Madras High Court scope ───────────────────────────────────────────────────
+// This application is exclusively for Madras High Court litigation monitoring.
+const COURT_TYPE = "HIGH_COURT";
+const HIGH_COURT_CODE = "HCMA01";
+const STATE_CODE = "TN";
+
+// Madras High Court case-type → eCourts case category.
+const CASE_TYPE_MAP: Record<string, string> = {
+  WP: "WRIT",
+  WMP: "WRIT",
+  WA: "WRIT",
+  HCP: "CRIMINAL",
+  CMA: "CIVIL",
+  CMP: "CIVIL",
+  CRP: "REVISION",
+  CONTP: "CONTEMPT",
+  OP: "CIVIL",
+  OSA: "APPEAL",
+};
+
+// Normalize eCourts stage values to a consistent set used across all modules
+// (daily_cause_list.stage_name, cases.case_status, today_matched_listings.stage).
+const STAGE_MAP: Record<string, string> = {
+  FOR_ADMISSION: "For Admission",
+  PART_HEARD: "Part Heard",
+  FOR_ORDERS: "For Orders",
+  FOR_JUDGMENT: "For Judgment",
+  DISPOSED: "Disposed",
+  PENDING: "Pending",
+};
+
+function mapCaseCategory(caseType: string): string {
+  return CASE_TYPE_MAP[caseType.trim().toUpperCase()] ?? "OTHER";
+}
+
+function normalizeStage(stage: string | null | undefined): string {
+  if (!stage) return "";
+  const key = stage.trim().toUpperCase().replace(/\s+/g, "_");
+  return STAGE_MAP[key] ?? stage.trim();
+}
+
+function isMadrasHighCourtCnr(cnr: string): boolean {
+  return cnr.trim().toUpperCase().startsWith(HIGH_COURT_CODE);
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -36,6 +81,8 @@ interface EcourtsCase {
   respondent?: string[];
   pet_adv?: string[];
   res_adv?: string[];
+  judges?: string[];
+  judge?: string[];
   hearing_history?: Array<{
     hearing_date: string;
     purpose: string;
@@ -132,29 +179,48 @@ async function searchCase(caseNumber: string): Promise<{ result: SearchResult | 
   }
 }
 
-function buildCaseDetails(ecCase: EcourtsCase) {
+function buildCaseDetails(ecCase: EcourtsCase, caseTypeHint?: string) {
+  const caseType = (caseTypeHint ?? ecCase.case_type ?? "").toUpperCase();
+  const caseCategory = mapCaseCategory(caseType);
+
+  const orders = (ecCase.orders ?? []).map((o) => ({
+    orderDate: o.order_date ?? "",
+    orderNumber: o.order_no ?? "",
+    orderType: o.order_type ?? "",
+    orderUrl: o.order_url ?? "",
+  }));
+  const judgmentCount = orders.filter((o) => /JUDG/i.test(o.orderType)).length;
+
+  const hearingHistory = (ecCase.hearing_history ?? []).map((h) => ({
+    date: h.hearing_date ?? "",
+    purpose: h.purpose ?? "",
+    businessDate: h.business_date ?? "",
+    remarks: h.remarks ?? "",
+  }));
+
+  const judges = ecCase.judges ?? ecCase.judge ?? [];
+
   return {
     caseNumber: ecCase.case_no ?? `${ecCase.case_type}/${ecCase.reg_no}/${ecCase.reg_year}`,
     cnrNumber: ecCase.cino ?? "",
+    courtType: COURT_TYPE,
+    highCourtCode: HIGH_COURT_CODE,
+    stateCode: STATE_CODE,
     courtName: ecCase.court_name ?? "Madras High Court",
-    caseStatus: ecCase.case_status ?? "",
+    district: ecCase.dist_name ?? null,
+    caseCategory,
+    caseStatus: normalizeStage(ecCase.case_status),
     nextHearingDate: ecCase.next_hearing_date ?? null,
     petitioners: ecCase.petitioner ?? [],
     respondents: ecCase.respondent ?? [],
     petitionerAdvocates: ecCase.pet_adv ?? [],
     respondentAdvocates: ecCase.res_adv ?? [],
-    hearingHistory: (ecCase.hearing_history ?? []).map((h) => ({
-      date: h.hearing_date ?? "",
-      purpose: h.purpose ?? "",
-      businessDate: h.business_date ?? "",
-      remarks: h.remarks ?? "",
-    })),
-    orders: (ecCase.orders ?? []).map((o) => ({
-      orderDate: o.order_date ?? "",
-      orderNumber: o.order_no ?? "",
-      orderType: o.order_type ?? "",
-      orderUrl: o.order_url ?? "",
-    })),
+    judges,
+    hearingHistory,
+    hearingCount: hearingHistory.length,
+    orders,
+    orderCount: orders.length,
+    judgmentCount,
     filingDate: ecCase.filing_date ?? null,
     registrationDate: ecCase.reg_date ?? null,
     disposalDate: ecCase.disposal_date ?? null,
@@ -297,6 +363,17 @@ Deno.serve(async (req) => {
       .eq("id", caseRow.id);
   }
 
+  // Step 6b — Enforce Madras High Court scope (CNR must start with HCMA01)
+  if (!isMadrasHighCourtCnr(cnr)) {
+    console.warn("[case-details] Rejected non-Madras-HC CNR:", cnr);
+    return jsonResponse({
+      success: false,
+      error: "Only Madras High Court cases are supported.",
+      detail: `CNR ${cnr} is not a ${HIGH_COURT_CODE} (${COURT_TYPE}/${STATE_CODE}) case.`,
+      received,
+    });
+  }
+
   // Step 7 — Fetch case details from eCourtsIndia
   if (!ECOURTS_API_BASE || !ECOURTS_API_KEY) {
     return jsonResponse({
@@ -320,7 +397,8 @@ Deno.serve(async (req) => {
   }
 
   // Step 8 — Build response and save
-  const caseDetails = buildCaseDetails(ecResult.data);
+  const caseTypeHint = parseCaseNumber(effectiveCaseNumber)?.type ?? ecResult.data.case_type ?? "";
+  const caseDetails = buildCaseDetails(ecResult.data, caseTypeHint);
   const now = new Date().toISOString();
 
   const { error: updateErr } = await supabase
@@ -328,7 +406,9 @@ Deno.serve(async (req) => {
     .update({
       case_details_json: caseDetails,
       case_details_last_fetched: now,
-      case_status: ecResult.data.case_status || caseRow.case_status,
+      case_details_last_synced: now,
+      case_category: caseDetails.caseCategory,
+      case_status: caseDetails.caseStatus || caseRow.case_status,
       petitioner: ecResult.data.petitioner?.join(", ") || caseRow.petitioner,
       respondent: ecResult.data.respondent?.join(", ") || caseRow.respondent,
       next_hearing_date: ecResult.data.next_hearing_date || caseRow.next_hearing_date,
