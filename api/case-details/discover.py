@@ -755,11 +755,11 @@ class handler(BaseHTTPRequestHandler):
         captcha = _clean(data.get("captcha") or "")
         captcha_token = _clean(data.get("captchaToken") or data.get("captcha_token") or "")
 
-        if not case_id:
+        if not case_id and not listing_id:
             return self._json(
                 {
                     "success": False,
-                    "message": "caseId is required.",
+                    "message": "caseId or listingId is required.",
                 },
                 400,
             )
@@ -768,7 +768,7 @@ class handler(BaseHTTPRequestHandler):
         if load_err or not listing or not case_row:
             return self._json({"success": False, "message": load_err or "Listing not found."}, 404)
 
-        if _clean(case_row.get("id")) != case_id:
+        if case_id and _clean(case_row.get("id")) != case_id:
             return self._json({"success": False, "message": "caseId does not match listing."}, 400)
 
         details, err, challenge = _handle_case_details_flow(
