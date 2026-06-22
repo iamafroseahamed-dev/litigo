@@ -325,8 +325,7 @@ export default function TodaysListingsPage() {
                   <TableHead className="whitespace-nowrap">Petitioner</TableHead>
                   <TableHead className="whitespace-nowrap">Respondent</TableHead>
                   <TableHead className="whitespace-nowrap">Judge</TableHead>
-                  <TableHead className="whitespace-nowrap">Case Status</TableHead>
-                  <TableHead className="whitespace-nowrap">Sensitivity</TableHead>
+                  <TableHead className="whitespace-nowrap">Case Status</TableHead>                  
                   <TableHead className="whitespace-nowrap">Notification</TableHead>
                 </TableRow>
               </TableHeader>
@@ -390,10 +389,7 @@ export default function TodaysListingsPage() {
                         <TableCell className="whitespace-nowrap">{record.judge_name ?? '\u2014'}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
                           {record.stage  ?? '\u2014'}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs">
-                          {record.case?.sensitivity ?? '\u2014'}
-                        </TableCell>
+                        </TableCell>                       
                         <TableCell className="whitespace-nowrap">
                           <NotifBadge status={record.notification_status} />
                         </TableCell>
