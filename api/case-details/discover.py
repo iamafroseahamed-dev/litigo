@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -299,40 +300,50 @@ def _supabase_get_listing_case(
     case_id: str,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
     try:
-        base_filter: Dict[str, str] = {"limit": "1"}
-        if listing_id:
-            base_filter["id"] = f"eq.{listing_id}"
-        else:
-            base_filter["case_id"] = f"eq.{case_id}"
-            base_filter["order"] = "listed_date.desc,created_at.desc"
-
         listing: Optional[Dict[str, Any]] = None
 
-        def _fetch_listing(select_expr: str) -> requests.Response:
-            return requests.get(
-                f"{SUPABASE_URL}/rest/v1/today_matched_listings",
-                headers=_sb_headers("count=none"),
-                params={**base_filter, "select": select_expr},
-                timeout=30,
-            )
+        def _load_listing(filters: Dict[str, str]) -> Optional[Dict[str, Any]]:
+            def _fetch_listing(select_expr: str) -> requests.Response:
+                return requests.get(
+                    f"{SUPABASE_URL}/rest/v1/today_matched_listings",
+                    headers=_sb_headers("count=none"),
+                    params={**filters, "select": select_expr},
+                    timeout=30,
+                )
 
-        # Attempt full projection first.
-        resp = _fetch_listing(
-            "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
-            "petitioner,respondent,case_details_json,case_details_last_fetched"
-        )
-
-        # Fallback to base projection if DB hasn't applied cache migration or query is rejected.
-        if not resp.ok and resp.status_code == 400:
+            # Attempt full projection first.
             resp = _fetch_listing(
                 "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
-                "petitioner,respondent"
+                "petitioner,respondent,case_details_json,case_details_last_fetched"
             )
 
-        if resp.ok:
+            # Fallback to base projection if DB hasn't applied cache migration or query is rejected.
+            if not resp.ok and resp.status_code == 400:
+                resp = _fetch_listing(
+                    "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
+                    "petitioner,respondent"
+                )
+
+            if not resp.ok:
+                return None
+
             rows = resp.json()
             if isinstance(rows, list) and rows:
-                listing = rows[0]
+                return rows[0]
+            return None
+
+        # Prefer explicit listing id, but gracefully fall back to case id if the listing row was rotated.
+        if listing_id:
+            listing = _load_listing({"limit": "1", "id": f"eq.{listing_id}"})
+
+        if listing is None and case_id:
+            listing = _load_listing(
+                {
+                    "limit": "1",
+                    "case_id": f"eq.{case_id}",
+                    "order": "listed_date.desc,created_at.desc",
+                }
+            )
 
         # Last-resort fallback: continue with synthetic listing if we at least have caseId.
         if listing is None and case_id:
@@ -771,6 +782,47 @@ def _handle_case_details_flow(
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query or "")
+
+        case_id = _clean((query.get("caseId") or query.get("case_id") or [""])[0])
+        listing_id = _clean((query.get("listingId") or query.get("listing_id") or [""])[0])
+        case_number = _clean((query.get("caseNumber") or query.get("case_number") or [""])[0]).upper()
+        captcha = _clean((query.get("captcha") or [""])[0])
+        captcha_token = _clean((query.get("captchaToken") or query.get("captcha_token") or [""])[0])
+
+        if not case_id and not listing_id:
+            return self._json(
+                {
+                    "success": False,
+                    "message": "caseId or listingId is required.",
+                },
+                400,
+            )
+
+        listing, case_row, load_err = _supabase_get_listing_case(listing_id, case_id)
+        if load_err or not listing or not case_row:
+            return self._json({"success": False, "message": load_err or "Listing not found."}, 404)
+
+        if case_id and _clean(case_row.get("id")) != case_id:
+            return self._json({"success": False, "message": "caseId does not match listing."}, 400)
+
+        details, err, challenge = _handle_case_details_flow(
+            listing=listing,
+            case_row=case_row,
+            case_number=case_number,
+            captcha=captcha,
+            captcha_token=captcha_token,
+        )
+
+        if challenge:
+            return self._json({"success": False, **challenge}, 200)
+        if err:
+            return self._json({"success": False, "message": err}, 200)
+
+        return self._json({"success": True, "caseDetails": details}, 200)
+
     def do_POST(self) -> None:
         try:
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
