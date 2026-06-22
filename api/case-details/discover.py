@@ -302,8 +302,7 @@ def _supabase_get_listing_case(
         params: Dict[str, str] = {
             "select": (
                 "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
-                "petitioner,respondent,case_details_json,case_details_last_fetched,"
-                "case:cases(id,case_number,cnr_number,ecourts_case_no,cnr_discovered_at,prayer,petitioner,respondent)"
+                "petitioner,respondent,case_details_json,case_details_last_fetched"
             ),
             "limit": "1",
         }
@@ -324,9 +323,27 @@ def _supabase_get_listing_case(
         if not rows:
             return None, None, "Listing not found."
         listing = rows[0]
-        case_row = listing.get("case") if isinstance(listing.get("case"), dict) else None
+
+        actual_case_id = _clean(listing.get("case_id") or case_id)
+        if not actual_case_id:
+            return None, None, "Case details not found for this listing."
+
+        case_resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/cases",
+            headers=_sb_headers("count=none"),
+            params={
+                "select": "id,case_number,cnr_number,ecourts_case_no,cnr_discovered_at,prayer,petitioner,respondent",
+                "id": f"eq.{actual_case_id}",
+                "limit": "1",
+            },
+            timeout=30,
+        )
+        case_resp.raise_for_status()
+        case_rows = case_resp.json()
+        case_row = case_rows[0] if isinstance(case_rows, list) and case_rows else None
         if not case_row:
             return None, None, "Case details not found for this listing."
+
         return listing, case_row, None
     except Exception as exc:
         return None, None, f"Unable to load listing details: {exc}"
@@ -646,6 +663,14 @@ def _handle_case_details_flow(
 
     needs_discovery = not cnr_number or not ecourts_case_no
     if needs_discovery:
+        effective_case_number = _clean(
+            case_number
+            or listing.get("case_number")
+            or case_row.get("case_number")
+        ).upper()
+        if not effective_case_number:
+            return None, "caseNumber is required for discovery.", None
+
         if not captcha or not captcha_token:
             challenge = _captcha_challenge()
             return None, "Captcha Required", {
@@ -655,7 +680,7 @@ def _handle_case_details_flow(
             }
 
         discovered_case_no, discovered_cino, discover_err = _search_case(
-            case_number=case_number,
+            case_number=effective_case_number,
             captcha=captcha,
             captcha_token=captcha_token,
         )
@@ -730,11 +755,11 @@ class handler(BaseHTTPRequestHandler):
         captcha = _clean(data.get("captcha") or "")
         captcha_token = _clean(data.get("captchaToken") or data.get("captcha_token") or "")
 
-        if not case_id or not case_number:
+        if not case_id:
             return self._json(
                 {
                     "success": False,
-                    "message": "caseId and caseNumber are required.",
+                    "message": "caseId is required.",
                 },
                 400,
             )
