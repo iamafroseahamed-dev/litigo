@@ -299,25 +299,42 @@ def _supabase_get_listing_case(
     case_id: str,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
     try:
-        params: Dict[str, str] = {
+        base_filter: Dict[str, str] = {"limit": "1"}
+        if listing_id:
+            base_filter["id"] = f"eq.{listing_id}"
+        else:
+            base_filter["case_id"] = f"eq.{case_id}"
+            base_filter["order"] = "listed_date.desc,created_at.desc"
+
+        # Try full projection first (includes cache columns from migration 011).
+        params_full = {
+            **base_filter,
             "select": (
                 "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
                 "petitioner,respondent,case_details_json,case_details_last_fetched"
             ),
-            "limit": "1",
         }
-        if listing_id:
-            params["id"] = f"eq.{listing_id}"
-        else:
-            params["case_id"] = f"eq.{case_id}"
-            params["order"] = "listed_date.desc,created_at.desc"
-
         resp = requests.get(
             f"{SUPABASE_URL}/rest/v1/today_matched_listings",
             headers=_sb_headers("count=none"),
-            params=params,
+            params=params_full,
             timeout=30,
         )
+        if not resp.ok and resp.status_code == 400:
+            # Fallback for DBs where cache columns are not migrated yet.
+            params_base = {
+                **base_filter,
+                "select": (
+                    "id,case_id,case_number,cnr_number,court_hall,judge_name,stage,"
+                    "petitioner,respondent"
+                ),
+            }
+            resp = requests.get(
+                f"{SUPABASE_URL}/rest/v1/today_matched_listings",
+                headers=_sb_headers("count=none"),
+                params=params_base,
+                timeout=30,
+            )
         resp.raise_for_status()
         rows = resp.json()
         if not rows:
