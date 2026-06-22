@@ -23,9 +23,41 @@ export type EcourtsOrderRecord = {
   pdfUrl: string;
 };
 
+export type EcourtsCaseDetails = {
+  caseNumber: string;
+  cnrNumber: string;
+  caseStatus: string;
+  nextHearingDate: string;
+  judgeName: string;
+  courtNumber: string;
+  filingNumber: string;
+  registrationNumber: string;
+};
+
+export type EcourtsParties = {
+  petitioner: string;
+  respondent: string;
+  petitionerAdvocate: string;
+  respondentAdvocate: string;
+};
+
+export type EcourtsHearingRecord = {
+  hearingDate: string;
+  purpose: string;
+  stage: string;
+  remarks: string;
+};
+
+export type EcourtsParsedCaseHistory = {
+  caseDetails: EcourtsCaseDetails;
+  parties: EcourtsParties;
+  hearingHistory: EcourtsHearingRecord[];
+  orders: EcourtsOrderRecord[];
+  rawHtml: string;
+};
+
 export type EcourtsShowRecordsResult = {
-  orderRecords: EcourtsOrderRecord[];
-  caseHistoryHtml: string;
+  parsedCaseHistory: EcourtsParsedCaseHistory;
 };
 
 export class EcourtsError extends Error {
@@ -100,6 +132,259 @@ function parseConRecords(value: unknown): Array<Record<string, unknown>> {
   }
 
   return [];
+}
+
+function headingKey(value: string): string {
+  return clean(value).toLowerCase();
+}
+
+function buildHeadingTableMap(doc: Document): Map<string, HTMLTableElement> {
+  const map = new Map<string, HTMLTableElement>();
+  let currentHeading = '';
+
+  for (const el of Array.from(doc.querySelectorAll('h1,h2,h3,h4,table'))) {
+    if (el instanceof HTMLTableElement) {
+      const key = headingKey(currentHeading);
+      if (key && !map.has(key)) {
+        map.set(key, el);
+      }
+    } else {
+      const text = clean(el.textContent);
+      if (text) {
+        currentHeading = text;
+      }
+    }
+  }
+
+  return map;
+}
+
+function tableHeaders(table: HTMLTableElement): string[] {
+  const firstRow = table.querySelector('tr');
+  if (!firstRow) return [];
+  const headers = Array.from(firstRow.querySelectorAll('th')).map((cell) => clean(cell.textContent));
+  return headers.filter(Boolean);
+}
+
+function tableRows(table: HTMLTableElement, skipHeader = true): string[][] {
+  const headers = tableHeaders(table);
+  const rows = Array.from(table.querySelectorAll('tr'));
+  const startIndex = skipHeader && headers.length > 0 ? 1 : 0;
+
+  return rows.slice(startIndex)
+    .map((row) => Array.from(row.querySelectorAll('td')).map((cell) => clean(cell.textContent)))
+    .filter((row) => row.some(Boolean));
+}
+
+function flat4ColToPairs(table: HTMLTableElement): Array<[string, string]> {
+  const pairs: Array<[string, string]> = [];
+  for (const row of Array.from(table.querySelectorAll('tr'))) {
+    const values = Array.from(row.querySelectorAll('th,td'))
+      .map((cell) => clean(cell.textContent))
+      .filter(Boolean);
+
+    if (values.length >= 4) {
+      pairs.push([values[0], values[1] ?? '']);
+      pairs.push([values[2], values[3] ?? '']);
+    } else if (values.length === 2) {
+      pairs.push([values[0], values[1]]);
+    } else if (values.length === 1) {
+      pairs.push([values[0], '']);
+    }
+  }
+
+  return pairs.filter(([label, value]) => Boolean(label || value));
+}
+
+function setSummaryPairs(summary: Record<string, string>, pairs: Array<[string, string]>): void {
+  for (const [label, value] of pairs) {
+    if (label && value) {
+      summary[label] = value;
+    }
+  }
+}
+
+function summaryValue(summary: Record<string, string>, keys: string[]): string {
+  for (const key of keys) {
+    const match = Object.keys(summary).find((candidate) => headingKey(candidate) === headingKey(key));
+    if (match && clean(summary[match])) {
+      return clean(summary[match]);
+    }
+  }
+  return '';
+}
+
+function parsePartySpan(span: Element | null): { name: string; advocate: string } {
+  if (!span) {
+    return { name: '', advocate: '' };
+  }
+
+  const lines = clean(span.textContent)
+    .split(/\n+/)
+    .map((line) => clean(line))
+    .filter(Boolean);
+
+  let currentName = '';
+  let currentAdvocate = '';
+  for (const line of lines) {
+    if (/^\d+\)/.test(line)) {
+      if (!currentName) {
+        currentName = line.replace(/^\d+\)\s*/, '').trim();
+      }
+      continue;
+    }
+    if (/advocate-/i.test(line)) {
+      currentAdvocate = line.replace(/(?i)advocate-\s*/, '').trim();
+      continue;
+    }
+    if (!currentName) {
+      currentName = line;
+    }
+  }
+
+  return { name: currentName, advocate: currentAdvocate };
+}
+
+function headerIndex(headers: string[], keywords: string[]): number {
+  for (let index = 0; index < headers.length; index += 1) {
+    const header = headingKey(headers[index] ?? '');
+    if (keywords.some((keyword) => header.includes(headingKey(keyword)))) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function rowValue(row: string[], index: number): string {
+  return index >= 0 ? clean(row[index]) : '';
+}
+
+function parseCaseHistoryHtml(html: string, fallbackOrder: EcourtsOrderRecord): EcourtsParsedCaseHistory {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const headingToTable = buildHeadingTableMap(doc);
+  const summary: Record<string, string> = {};
+
+  const caseDetailsTable = headingToTable.get('case details');
+  if (caseDetailsTable) {
+    setSummaryPairs(summary, flat4ColToPairs(caseDetailsTable));
+  }
+
+  const caseStatusTable = headingToTable.get('case status');
+  if (caseStatusTable) {
+    setSummaryPairs(summary, flat4ColToPairs(caseStatusTable));
+  }
+
+  const petitioner = parsePartySpan(doc.querySelector('span.Petitioner_Advocate_table'));
+  const respondent = parsePartySpan(doc.querySelector('span.Respondent_Advocate_table'));
+
+  const caseDetails: EcourtsCaseDetails = {
+    caseNumber:
+      summaryValue(summary, ['Case Number', 'Registration Number']) ||
+      `${fallbackOrder.typeName}/${fallbackOrder.registrationNumber}/${fallbackOrder.registrationYear}`,
+    cnrNumber: summaryValue(summary, ['CNR Number']) || fallbackOrder.cino,
+    caseStatus: summaryValue(summary, ['Case Status', 'Status']),
+    nextHearingDate: summaryValue(summary, ['Next Hearing Date', 'Next Date']),
+    judgeName: summaryValue(summary, ['Judge', 'Coram', 'Judge Name']),
+    courtNumber: summaryValue(summary, ['Court Number', 'Court No', 'Court Hall']),
+    filingNumber: summaryValue(summary, ['Filing Number']),
+    registrationNumber: summaryValue(summary, ['Registration Number']) || fallbackOrder.registrationNumber,
+  };
+
+  const parties: EcourtsParties = {
+    petitioner: petitioner.name,
+    respondent: respondent.name,
+    petitionerAdvocate: petitioner.advocate,
+    respondentAdvocate: respondent.advocate,
+  };
+
+  const hearingHistory: EcourtsHearingRecord[] = [];
+  const hearingTable = headingToTable.get('history of case hearing');
+  if (hearingTable) {
+    const headers = tableHeaders(hearingTable);
+    const rows = tableRows(hearingTable, headers.length > 0);
+    const dateIndex = headerIndex(headers, ['Hearing Date', 'Date']);
+    const purposeIndex = headerIndex(headers, ['Purpose']);
+    const stageIndex = headerIndex(headers, ['Stage', 'Cause List Type']);
+    const judgeIndex = headerIndex(headers, ['Judge']);
+    const businessIndex = headerIndex(headers, ['Business On Date']);
+    const remarksIndex = headerIndex(headers, ['Remarks']);
+
+    for (const row of rows) {
+      const remarksParts = [rowValue(row, remarksIndex), rowValue(row, judgeIndex), rowValue(row, businessIndex)]
+        .filter(Boolean);
+      hearingHistory.push({
+        hearingDate: rowValue(row, dateIndex) || clean(row[3]),
+        purpose: rowValue(row, purposeIndex) || clean(row[4]),
+        stage: rowValue(row, stageIndex) || clean(row[0]),
+        remarks: remarksParts.join(' | '),
+      });
+    }
+  }
+
+  const orders: EcourtsOrderRecord[] = [];
+  const ordersTable = headingToTable.get('orders');
+  if (ordersTable) {
+    const headers = tableHeaders(ordersTable);
+    const bodyRows = Array.from(ordersTable.querySelectorAll('tr'));
+    const startIndex = headers.length > 0 ? 1 : 0;
+
+    for (const row of bodyRows.slice(startIndex)) {
+      const cells = Array.from(row.querySelectorAll('td,th')).map((cell) => clean(cell.textContent));
+      if (!cells.some(Boolean)) continue;
+
+      const anchor = row.querySelector('a[href]');
+      const href = anchor?.getAttribute('href') ?? '';
+      const absoluteHref = href ? new URL(href, 'https://hcservices.ecourts.gov.in/hcservices/').toString() : '';
+      const absoluteUrl = absoluteHref ? new URL(absoluteHref) : null;
+      const orderUrlPath = clean(absoluteUrl?.searchParams.get('filename'));
+      const orderNumber = rowValue(cells, headerIndex(headers, ['Order Number', 'Order No'])) || clean(cells[0]);
+      const orderDate = rowValue(cells, headerIndex(headers, ['Order Date', 'Order On', 'Date'])) || clean(cells[cells.length - 1]);
+      const orderType = rowValue(cells, headerIndex(headers, ['Type', 'Document Type', 'Details'])) || clean(anchor?.textContent) || fallbackOrder.documentType;
+
+      if (!orderUrlPath && !orderNumber && !orderDate && !orderType) {
+        continue;
+      }
+
+      const pdfUrl = orderUrlPath
+        ? buildPdfUrl({
+            orderurlpath: orderUrlPath,
+            type_name: fallbackOrder.typeName,
+            reg_no: fallbackOrder.registrationNumber,
+            reg_year: fallbackOrder.registrationYear,
+            cino: caseDetails.cnrNumber || fallbackOrder.cino,
+          })
+        : absoluteHref;
+
+      orders.push({
+        caseNo: fallbackOrder.caseNo,
+        cino: caseDetails.cnrNumber || fallbackOrder.cino,
+        orderUrlPath,
+        registrationNumber: fallbackOrder.registrationNumber,
+        registrationYear: fallbackOrder.registrationYear,
+        typeName: fallbackOrder.typeName,
+        orderDate,
+        orderNumber,
+        documentType: orderType,
+        pdfUrl,
+      });
+    }
+  }
+
+  const parsedData: EcourtsParsedCaseHistory = {
+    caseDetails,
+    parties,
+    hearingHistory,
+    orders,
+    rawHtml: html,
+  };
+
+  console.log('CASE DETAILS', caseDetails);
+  console.log('HEARINGS', hearingHistory);
+  console.log('ORDERS', orders);
+  console.log(parsedData);
+
+  return parsedData;
 }
 
 function mapOrderRecord(record: Record<string, unknown>): EcourtsOrderRecord {
@@ -310,7 +595,8 @@ export async function submitShowRecordsCaptcha(args: { captchaValue: string }): 
       console.log(records[0]);
       const orderRecords = records.map(mapOrderRecord);
       const caseHistoryHtml = await fetchCaseHistoryHtml(orderRecords[0]);
-      return { orderRecords, caseHistoryHtml };
+      const parsedCaseHistory = parseCaseHistoryHtml(caseHistoryHtml, orderRecords[0]);
+      return { parsedCaseHistory };
     }
 
     throw new EcourtsError('UNKNOWN', 'No order data returned from showRecords');
