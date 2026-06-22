@@ -23,7 +23,7 @@ Matching + eCourts hearing history enrichment pipeline:
               matched_count, enriched_count }.
 
 CNR discovery (for cases without a CNR) is a separate user-triggered flow
-via /api/ecourts/lookup-cnr — it is never called here.
+via the removed eCourts lookup flow — it is never called here.
 """
 from __future__ import annotations
 
