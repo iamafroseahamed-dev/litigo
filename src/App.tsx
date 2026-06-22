@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
+import { Analytics } from '@vercel/analytics/react';
 import { AuthProvider } from '@/lib/auth';
 import { ProtectedRoute, PublicRoute } from '@/components/ProtectedRoute';
 import { Layout } from '@/components/Layout';
@@ -52,6 +53,7 @@ export default function App() {
         </Suspense>
       </BrowserRouter>
       <Toaster richColors position="top-right" expand={true} duration={4000} />
+      <Analytics />
     </AuthProvider>
   );
 }
