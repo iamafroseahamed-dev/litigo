@@ -243,24 +243,50 @@ export default function TodaysListingsPage() {
           return;
         }
 
-        const searchRes = await fetch('/ecourts-proxy/api/partner/search', {
-          method: 'POST',
+        const searchPayload = {
+          case_type: parsed[0],
+          case_number: parsed[1].replace(/\D/g, ''),
+          year: parsed[2].replace(/\D/g, ''),
+          state_code: '33',
+          court_code: '1',
+        };
+
+        let searchUrl = '/ecourts-proxy/api/partner/search';
+        let searchMethod: 'POST' | 'GET' = 'POST';
+        let searchRes = await fetch(searchUrl, {
+          method: searchMethod,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            case_type: parsed[0],
-            case_number: parsed[1].replace(/\D/g, ''),
-            year: parsed[2].replace(/\D/g, ''),
-            state_code: '33',
-            court_code: '1',
-          }),
+          body: JSON.stringify(searchPayload),
         });
+
+        if (searchRes.status === 405) {
+          const qs = new URLSearchParams(searchPayload).toString();
+          searchUrl = `/ecourts-proxy/api/partner/search?${qs}`;
+          searchMethod = 'GET';
+          searchRes = await fetch(searchUrl, {
+            method: searchMethod,
+            headers: { 'Accept': 'application/json' },
+          });
+        }
+
+        if (searchRes.status === 405) {
+          searchUrl = '/ecourts-proxy/api/partner/case/search';
+          searchMethod = 'POST';
+          searchRes = await fetch(searchUrl, {
+            method: searchMethod,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(searchPayload),
+          });
+        }
+
         const searchText = await searchRes.text();
+        console.log('[case-details] Search request:', searchMethod, searchUrl, searchPayload);
         console.log('[case-details] Search response:', searchRes.status, searchText.slice(0, 500));
         let searchData: any = {};
         try { searchData = searchText ? JSON.parse(searchText) : {}; } catch { /* not JSON */ }
 
         if (!searchRes.ok) {
-          setDetailsError(`Search API returned ${searchRes.status}: ${searchText.slice(0, 300)}`);
+          setDetailsError(`Search API ${searchMethod} ${searchUrl} returned ${searchRes.status}: ${searchText.slice(0, 300)}`);
           return;
         }
 
