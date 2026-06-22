@@ -32,6 +32,17 @@ type CaseDetails = {
   orders: Array<{ orderDate: string; orderNumber: string; orderType: string }>;
 };
 
+type EcourtsCaseDetailsResponse = {
+  success: boolean;
+  cnr_number?: string;
+  case_number?: string;
+  summary_fields?: Record<string, string>;
+  tables?: Array<{ title?: string; headers?: string[]; rows?: string[][] }>;
+  text?: string;
+  detail?: string;
+  message?: string;
+};
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string | null | undefined) {
@@ -215,6 +226,104 @@ export default function TodaysListingsPage() {
     return <span className="ml-1">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>;
   }
 
+  function mapEcourtsToCaseDetails(
+    record: TodayMatchedListing,
+    data: EcourtsCaseDetailsResponse,
+  ): CaseDetails {
+    const summary = data.summary_fields ?? {};
+    const tables = data.tables ?? [];
+
+    const hearingTable = tables.find(t =>
+      (t.title ?? '').toLowerCase().includes('history of case hearing'),
+    );
+    const hearingHeaders = (hearingTable?.headers ?? []).map(h => h.toLowerCase());
+    const hearingRows = hearingTable?.rows ?? [];
+
+    const idx = (headers: string[], keys: string[], fallback: number) => {
+      for (const key of keys) {
+        const i = headers.findIndex(h => h.includes(key));
+        if (i >= 0) return i;
+      }
+      return fallback;
+    };
+
+    const dateIdx = idx(hearingHeaders, ['hearing date', 'date'], 3);
+    const purposeIdx = idx(hearingHeaders, ['purpose', 'business'], 4);
+    const stageIdx = idx(hearingHeaders, ['cause list type', 'stage'], 0);
+    const remarksIdx = idx(hearingHeaders, ['remarks', 'remark'], -1);
+
+    const hearingHistory = hearingRows.map((r) => ({
+      date: r[dateIdx] ?? '',
+      purpose: r[purposeIdx] ?? '',
+      stage: r[stageIdx] ?? '',
+      remarks: remarksIdx >= 0 ? (r[remarksIdx] ?? '') : '',
+    })).filter(h => h.date || h.purpose || h.stage || h.remarks);
+
+    const ordersTable = tables.find(t => (t.title ?? '').toLowerCase() === 'orders');
+    const orderHeaders = (ordersTable?.headers ?? []).map(h => h.toLowerCase());
+    const orderRows = ordersTable?.rows ?? [];
+    const orderDateIdx = idx(orderHeaders, ['order date', 'order on'], 3);
+    const orderNumberIdx = idx(orderHeaders, ['order no', 'order number'], 0);
+    const orderTypeIdx = idx(orderHeaders, ['order type', 'type'], -1);
+    const orders = orderRows.map((r) => ({
+      orderDate: r[orderDateIdx] ?? '',
+      orderNumber: r[orderNumberIdx] ?? '',
+      orderType: orderTypeIdx >= 0 ? (r[orderTypeIdx] ?? '') : '',
+    })).filter(o => o.orderDate || o.orderNumber || o.orderType);
+
+    const prayerFromSummary = summary['Prayer'] || summary['Prayer / Relief'] || '';
+    const prayerFromText = data.text?.match(/prayer\s*[:\-]?\s*(.+?)(?:\n\s*\n|history of case hearing|orders|$)/is)?.[1] ?? '';
+
+    return {
+      caseNumber: data.case_number || summary['Registration Number'] || summary['Case Number'] || record.case_number || record.case?.case_number || '',
+      cnrNumber: data.cnr_number || summary['CNR Number'] || record.case?.cnr_number || record.cnr_number || '',
+      petitioner: summary['Petitioner'] || record.petitioner || record.case?.petitioner || '',
+      respondent: summary['Respondent'] || record.respondent || record.case?.respondent || '',
+      courtHall: summary['Court Hall'] || summary['Court'] || record.court_hall || '',
+      judge: summary['Coram'] || summary['Judge'] || record.judge_name || '',
+      stageStatus: summary['Stage of Case'] || summary['Case Status'] || record.stage || '',
+      prayer: prayerFromSummary || prayerFromText || '',
+      hearingHistory,
+      orders,
+    };
+  }
+
+  async function loadCaseDetailsFallback(record: TodayMatchedListing): Promise<boolean> {
+    let cnr = record.case?.cnr_number ?? record.cnr_number ?? '';
+    const caseNumber = record.case_number ?? record.case?.case_number ?? '';
+
+    if (!cnr) {
+      const lookupRes = await fetch('/api/lookup-cnr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_number: caseNumber }),
+      });
+      const lookupData = await lookupRes.json();
+      if (!lookupRes.ok || !lookupData?.success || !lookupData?.cnr_number) {
+        setDetailsError(lookupData?.message ?? 'Unable to retrieve case details');
+        return false;
+      }
+      cnr = String(lookupData.cnr_number);
+    }
+
+    const detailsRes = await fetch('/api/ecourts/case-details', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cnr_number: cnr, case_number: caseNumber }),
+    });
+    const detailsData = (await detailsRes.json()) as EcourtsCaseDetailsResponse;
+    if (!detailsRes.ok || !detailsData?.success) {
+      setDetailsError(detailsData?.detail ?? detailsData?.message ?? 'Unable to retrieve case details');
+      return false;
+    }
+
+    setCaseDetails(mapEcourtsToCaseDetails(record, detailsData));
+    setCaptchaImage(null);
+    setCaptchaToken('');
+    setCaptchaText('');
+    return true;
+  }
+
   async function loadCaseDetails(record: TodayMatchedListing, captchaOverride?: string) {
     setDetailsLoading(true);
     setDetailsError(null);
@@ -239,6 +348,18 @@ export default function TodaysListingsPage() {
           setDetailsError(data.message ?? 'Captcha Required');
           return;
         }
+
+        const msg = String(data.message ?? '');
+        const shouldFallback =
+          res.status === 404
+          || msg.includes('Unable to load listing details')
+          || msg.includes('Listing not found');
+
+        if (shouldFallback) {
+          const ok = await loadCaseDetailsFallback(record);
+          if (ok) return;
+        }
+
         setDetailsError(data.message ?? 'Unable to retrieve case details');
         return;
       }
