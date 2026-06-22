@@ -1,4 +1,4 @@
-const ECOURTS_PROXY_BASE = '/hcservices-proxy';
+const ECOURTS_API_BASE = '/api/ecourts';
 
 const HC_CASE_TYPE_NUMERIC: Record<string, string> = {
   WP: '49',
@@ -67,6 +67,7 @@ const HC_CASE_TYPE_NUMERIC: Record<string, string> = {
 export type EcourtsCaptchaChallenge = {
   caseNumber: string;
   captchaImage: string;
+  captchaToken: string;
 };
 
 export type EcourtsOrderRecord = {
@@ -117,6 +118,26 @@ export type EcourtsParsedCaseHistory = {
 
 export type EcourtsShowRecordsResult = {
   parsedCaseHistory: EcourtsParsedCaseHistory;
+};
+
+type LookupCnrResponse = {
+  success?: boolean;
+  requiresCaptcha?: boolean;
+  message?: string;
+  caseNumber?: string;
+  captchaImage?: string;
+  captchaToken?: string;
+  cnr_number?: string;
+  ecourts_case_no?: string;
+  case_number?: string;
+};
+
+type CaseHistoryApiResponse = {
+  success?: boolean;
+  message?: string;
+  cnr_number?: string;
+  case_number?: string;
+  raw_html?: string;
 };
 
 export class EcourtsError extends Error {
@@ -521,151 +542,99 @@ function mapShowRecord(
 }
 
 async function fetchCaseHistoryHtml(showRecord: EcourtsOrderRecord): Promise<string> {
-  const payload = new URLSearchParams({
+  const payload = {
+    cnr_number: showRecord.cino,
+    ecourts_case_no: showRecord.caseNo,
+  };
+
+  console.log('CASE HISTORY REQUEST');
+  console.log(new URLSearchParams({
     court_code: '1',
     state_code: '10',
     court_complex_code: '1',
     case_no: showRecord.caseNo,
     cino: showRecord.cino,
     appFlag: '',
-  });
-
-  console.log('CASE HISTORY REQUEST');
-  console.log(payload.toString());
+  }).toString());
 
   let response: Response;
   try {
-    response = await fetch(
-      `${ECOURTS_PROXY_BASE}/hcservices/cases_qry/o_civil_case_history.php`,
-      {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'X-Requested-With': 'XMLHttpRequest',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        },
-        body: payload,
-      },
-    );
+    response = await fetch(`${ECOURTS_API_BASE}/case-history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
   } catch (error) {
     console.error(error);
     throw new EcourtsError('UNKNOWN', 'Unable to fetch case history');
   }
 
-  const responseText = await response.text();
+  let data: CaseHistoryApiResponse;
+  try {
+    data = await response.json() as CaseHistoryApiResponse;
+  } catch (error) {
+    console.error(error);
+    throw new EcourtsError('UNKNOWN', 'Invalid case history response');
+  }
+
   console.log('CASE HISTORY HTML');
-  console.log(responseText);
+  console.log(data.raw_html ?? '');
 
-  if (!response.ok) {
-    console.error(responseText);
-    throw new EcourtsError('UNKNOWN', 'Case history request failed');
+  if (!response.ok || !data.success) {
+    console.error(data.message ?? data.raw_html ?? '');
+    throw new EcourtsError('UNKNOWN', data.message || 'Case history request failed');
   }
 
-  return responseText;
-}
-
-async function responseToDataUrl(resp: Response): Promise<string> {
-  const blob = await resp.blob();
-  if (!blob.size) {
-    throw new EcourtsError('UNKNOWN', 'Unable to load captcha image');
-  }
-
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new EcourtsError('UNKNOWN', 'Unable to load captcha image'));
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function bootstrapSession(): Promise<void> {
-  const rootResp = await fetch(`${ECOURTS_PROXY_BASE}/`, {
-    method: 'GET',
-    credentials: 'include',
-  });
-
-  if (!rootResp.ok) {
-    throw new EcourtsError('SESSION_EXPIRED', 'Unable to initialize eCourts session');
-  }
-
-  const mainResp = await fetch(`${ECOURTS_PROXY_BASE}/hcservices/main.php?v=1`, {
-    method: 'GET',
-    credentials: 'include',
-    headers: {
-      Referer: `${ECOURTS_PROXY_BASE}/`,
-    },
-  });
-
-  if (!mainResp.ok) {
-    throw new EcourtsError('SESSION_EXPIRED', 'Unable to initialize eCourts session');
-  }
+  return data.raw_html ?? '';
 }
 
 export async function loadShowRecordsCaptcha(caseNumber: string): Promise<EcourtsCaptchaChallenge> {
   const parsedCase = parseCaseNumber(caseNumber);
-  await bootstrapSession();
-
-  const random = Math.floor(Math.random() * 1_000_000);
-  const resp = await fetch(
-    `${ECOURTS_PROXY_BASE}/hcservices/securimage/securimage_show.php?${random}`,
-    {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        Referer: `${ECOURTS_PROXY_BASE}/hcservices/main.php?v=1`,
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    },
-  );
-
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    console.error(errorText);
+  let resp: Response;
+  try {
+    resp = await fetch(`${ECOURTS_API_BASE}/lookup-cnr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ case_number: parsedCase.caseNumber }),
+    });
+  } catch (error) {
+    console.error(error);
     throw new EcourtsError('SESSION_EXPIRED', 'Unable to load captcha image');
   }
 
-  const contentType = clean(resp.headers.get('content-type')).toLowerCase();
-  if (!contentType.includes('image')) {
-    const errorText = await resp.text();
-    console.error(errorText);
+  let data: LookupCnrResponse;
+  try {
+    data = await resp.json() as LookupCnrResponse;
+  } catch (error) {
+    console.error(error);
     throw new EcourtsError('UNKNOWN', 'Unable to load captcha image');
   }
 
+  if (!resp.ok || !data.requiresCaptcha || !data.captchaImage || !data.captchaToken) {
+    console.error(data.message ?? data);
+    throw new EcourtsError('UNKNOWN', data.message || 'Unable to load captcha image');
+  }
+
   return {
-    caseNumber: parsedCase.caseNumber,
-    captchaImage: await responseToDataUrl(resp),
+    caseNumber: data.caseNumber || parsedCase.caseNumber,
+    captchaImage: data.captchaImage,
+    captchaToken: data.captchaToken,
   };
 }
 
-export async function submitShowRecordsCaptcha(args: { caseNumber: string; captchaValue: string }): Promise<EcourtsShowRecordsResult> {
+export async function submitShowRecordsCaptcha(args: { caseNumber: string; captchaValue: string; captchaToken: string }): Promise<EcourtsShowRecordsResult> {
   const parsedCase = parseCaseNumber(args.caseNumber);
-  const payload = new URLSearchParams({
-    court_code: '1',
-    state_code: '10',
-    court_complex_code: '1',
-    caseStatusSearchType: 'COcaseNumber',
-    captcha: args.captchaValue,
-    case_type_order: parsedCase.caseTypeOrder,
-    case_no_order: parsedCase.caseNumberOrder,
-    rgyearCaseOrder: parsedCase.caseYearOrder,
-  });
-
   let response: Response;
   try {
-    response = await fetch(
-      `${ECOURTS_PROXY_BASE}/hcservices/cases_qry/index_qry.php?action_code=showRecords`,
-      {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          Origin: 'https://hcservices.ecourts.gov.in',
-          Referer: `${ECOURTS_PROXY_BASE}/hcservices/main.php?v=1`,
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        body: payload,
-      },
-    );
+    response = await fetch(`${ECOURTS_API_BASE}/lookup-cnr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        case_number: parsedCase.caseNumber,
+        captcha: args.captchaValue,
+        captcha_token: args.captchaToken,
+      }),
+    });
   } catch (error) {
     console.error(error);
     throw new EcourtsError('UNKNOWN', 'Unable to submit showRecords request');
@@ -675,26 +644,36 @@ export async function submitShowRecordsCaptcha(args: { caseNumber: string; captc
   console.log('SHOW RECORDS RESPONSE');
   console.log(responseText);
 
-  if (!response.ok) {
-    console.error(responseText);
-    throw new EcourtsError('UNKNOWN', 'showRecords request failed');
-  }
-
   try {
-    const data = JSON.parse(responseText);
+    const data = JSON.parse(responseText) as LookupCnrResponse;
     console.log(data);
 
-    const records = parseConRecords(data?.con ?? data);
-    if (records.length > 0) {
-      console.log('PARSED RESULTS');
-      console.log(records[0]);
-      const showRecords = records.map((record) => mapShowRecord(record, parsedCase));
-      const caseHistoryHtml = await fetchCaseHistoryHtml(showRecords[0]);
-      const parsedCaseHistory = parseCaseHistoryHtml(caseHistoryHtml, showRecords[0]);
-      return { parsedCaseHistory };
+    if (!response.ok) {
+      console.error(data.message ?? responseText);
+      throw new EcourtsError('UNKNOWN', data.message || 'showRecords request failed');
     }
 
-    throw new EcourtsError('UNKNOWN', 'No order data returned from showRecords');
+    if (data.requiresCaptcha && data.captchaImage && data.captchaToken) {
+      throw new EcourtsError('INVALID_CAPTCHA', data.message || 'Invalid captcha. Please try again.');
+    }
+
+    if (!data.success || !data.cnr_number) {
+      throw new EcourtsError('UNKNOWN', data.message || 'Unable to resolve case number from eCourts.');
+    }
+
+    const showRecord = mapShowRecord({
+      case_no: data.ecourts_case_no,
+      cino: data.cnr_number,
+      reg_no: parsedCase.caseNumberOrder,
+      reg_year: parsedCase.caseYearOrder,
+      type_name: parsedCase.caseType,
+    }, parsedCase);
+
+    console.log('PARSED RESULTS');
+    console.log(showRecord);
+    const caseHistoryHtml = await fetchCaseHistoryHtml(showRecord);
+    const parsedCaseHistory = parseCaseHistoryHtml(caseHistoryHtml, showRecord);
+    return { parsedCaseHistory };
   } catch (error) {
     console.error(error);
     if (error instanceof EcourtsError) {

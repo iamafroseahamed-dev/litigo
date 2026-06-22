@@ -98,6 +98,7 @@ export default function TodaysListingsPage() {
   const [captchaChallenge, setCaptchaChallenge] = useState<EcourtsCaptchaChallenge | null>(null);
   const [parsedCaseHistory, setParsedCaseHistory] = useState<EcourtsParsedCaseHistory | null>(null);
   const [captchaImageUrl, setCaptchaImageUrl] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaValue, setCaptchaValue] = useState('');
   const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
   const [detailsPhase, setDetailsPhase] = useState<string | null>(null);
@@ -250,6 +251,7 @@ export default function TodaysListingsPage() {
     setDetailsTab('overview');
     setCaptchaValue('');
     setCaptchaImageUrl(null);
+    setCaptchaToken(null);
     setIsCaptchaDialogOpen(true);
     setDetailsLoading(true);
     setDetailsPhase('Loading Captcha');
@@ -258,6 +260,7 @@ export default function TodaysListingsPage() {
       const challenge = await loadShowRecordsCaptcha(caseNumber);
       setCaptchaChallenge(challenge);
       setCaptchaImageUrl(challenge.captchaImage);
+      setCaptchaToken(challenge.captchaToken);
     } catch (err) {
       setDetailsError(toUserErrorMessage(err));
     } finally {
@@ -274,12 +277,17 @@ export default function TodaysListingsPage() {
       return;
     }
 
+    if (!captchaToken) {
+      toast.error('Captcha session expired. Please reopen and try again.');
+      return;
+    }
+
     setCaptchaSubmitting(true);
     setDetailsError(null);
     setDetailsPhase('Loading Case History');
     try {
       const caseNumber = (selectedRecord.case_number ?? '').trim().toUpperCase();
-      const result = await submitShowRecordsCaptcha({ caseNumber, captchaValue: captcha });
+      const result = await submitShowRecordsCaptcha({ caseNumber, captchaValue: captcha, captchaToken });
       setParsedCaseHistory(result.parsedCaseHistory);
       setDetailsTab('overview');
       toast.success('Case history loaded.');
@@ -544,6 +552,7 @@ export default function TodaysListingsPage() {
             setDetailsError(null);
             setDetailsPhase(null);
             setParsedCaseHistory(null);
+            setCaptchaToken(null);
           }
         }}
       >
