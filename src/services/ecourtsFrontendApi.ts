@@ -108,15 +108,24 @@ function normalizeRelativeUrl(href: string): string {
 }
 
 export async function createEcourtsSession(): Promise<EcourtsSession> {
-  const resp = await fetch(`${ECOURTS_PROXY_BASE}/`, {
+  // Step 1: touch root to initialize upstream session cookies.
+  const rootResp = await fetch(`${ECOURTS_PROXY_BASE}/`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!rootResp.ok) {
+    throw new EcourtsError('SESSION_EXPIRED', 'Session Expired');
+  }
+
+  // Step 2: load main page; captcha endpoint depends on this flow.
+  const mainResp = await fetch(`${ECOURTS_PROXY_BASE}/hcservices/main.php?v=1`, {
     method: 'GET',
     credentials: 'include',
     headers: {
-      'X-Requested-With': 'XMLHttpRequest',
+      Referer: `${ECOURTS_PROXY_BASE}/`,
     },
   });
-
-  if (!resp.ok) {
+  if (!mainResp.ok) {
     throw new EcourtsError('SESSION_EXPIRED', 'Session Expired');
   }
 
@@ -140,7 +149,20 @@ export async function loadEcourtsCaptcha(): Promise<string> {
     throw new EcourtsError('SESSION_EXPIRED', 'Session Expired');
   }
 
+  const contentType = (resp.headers.get('content-type') ?? '').toLowerCase();
+  if (!contentType.includes('image')) {
+    const text = await resp.text();
+    const lower = text.toLowerCase();
+    if (lower.includes('session') || lower.includes('expire') || lower.includes('captcha')) {
+      throw new EcourtsError('SESSION_EXPIRED', 'Session Expired');
+    }
+    throw new EcourtsError('UNKNOWN', 'Unable to load captcha image');
+  }
+
   const blob = await resp.blob();
+  if (!blob.size) {
+    throw new EcourtsError('UNKNOWN', 'Unable to load captcha image');
+  }
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new EcourtsError('UNKNOWN', 'Unable to load captcha image'));
