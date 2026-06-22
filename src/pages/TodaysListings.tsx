@@ -22,6 +22,7 @@ import {
   loadShowRecordsCaptcha,
   submitShowRecordsCaptcha,
   type EcourtsCaptchaChallenge,
+  type EcourtsOrderRecord,
   EcourtsError,
 } from '@/services/ecourtsFrontendApi';
 
@@ -90,6 +91,7 @@ export default function TodaysListingsPage() {
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<TodayMatchedListing | null>(null);
   const [captchaChallenge, setCaptchaChallenge] = useState<EcourtsCaptchaChallenge | null>(null);
+  const [orderRecords, setOrderRecords] = useState<EcourtsOrderRecord[]>([]);
   const [captchaImageUrl, setCaptchaImageUrl] = useState<string | null>(null);
   const [captchaValue, setCaptchaValue] = useState('');
   const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
@@ -215,6 +217,28 @@ export default function TodaysListingsPage() {
     return 'Unable to load showRecords test';
   }
 
+  const primaryOrder = orderRecords[0] ?? null;
+
+  function handleViewPdf(record: EcourtsOrderRecord) {
+    console.log('ORDER DATA');
+    console.log(record);
+    console.log('PDF URL');
+    console.log(record.pdfUrl);
+    window.open(record.pdfUrl, '_blank');
+  }
+
+  function handleDownloadPdf(record: EcourtsOrderRecord) {
+    console.log('ORDER DATA');
+    console.log(record);
+    console.log('PDF URL');
+    console.log(record.pdfUrl);
+
+    const link = document.createElement('a');
+    link.href = record.pdfUrl;
+    link.target = '_blank';
+    link.click();
+  }
+
   async function handleViewDetails(row: TodayMatchedListing) {
     const caseNumber = (row.case_number ?? '').trim().toUpperCase();
     if (!caseNumber) {
@@ -225,6 +249,7 @@ export default function TodaysListingsPage() {
     setSelectedRecord(row);
     setDetailsError(null);
     setCaptchaChallenge(null);
+    setOrderRecords([]);
     setCaptchaValue('');
     setCaptchaImageUrl(null);
     setIsCaptchaDialogOpen(true);
@@ -255,8 +280,9 @@ export default function TodaysListingsPage() {
     setDetailsError(null);
     setDetailsPhase('Searching Case');
     try {
-      await submitShowRecordsCaptcha({ captchaValue: captcha });
-      toast.success('showRecords response logged to the browser console.');
+      const records = await submitShowRecordsCaptcha({ captchaValue: captcha });
+      setOrderRecords(records);
+      toast.success('Order details loaded.');
     } catch (err) {
       setDetailsError(toUserErrorMessage(err));
     } finally {
@@ -509,201 +535,136 @@ export default function TodaysListingsPage() {
         </>
       )}
 
-      <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-        <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
+      <Dialog
+        open={isCaptchaDialogOpen}
+        onOpenChange={(open) => {
+          setIsCaptchaDialogOpen(open);
+          if (!open) {
+            setCaptchaValue('');
+            setDetailsError(null);
+            setDetailsPhase(null);
+            setOrderRecords([]);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Eye className="h-4 w-4" />
-              Case Details
-            </DialogTitle>
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <span>Case Number: {selectedRecord?.case_number ?? '\u2014'}</span>
-              <span>CNR Number: {caseDetails?.cnrNumber ?? selectedRecord?.cnr_number ?? '\u2014'}</span>
-              <span>Case Status: {caseDetails?.caseStatus || '\u2014'}</span>
-            </div>
+            <DialogTitle>View Details Test</DialogTitle>
           </DialogHeader>
 
-          {detailsLoading && (
-            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              {detailsPhase ? `${detailsPhase}...` : 'Loading case details...'}
+          <div className="space-y-4">
+            <div className="rounded-md border p-4">
+              <h3 className="text-sm font-semibold">Case Information</h3>
+              <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <p><span className="font-medium">Case Number:</span> {primaryOrder ? `${primaryOrder.typeName}/${primaryOrder.registrationNumber}/${primaryOrder.registrationYear}` : captchaChallenge?.caseNumber ?? 'WP/16207/2026'}</p>
+                <p><span className="font-medium">CNR:</span> {primaryOrder?.cino || '\u2014'}</p>
+                <p><span className="font-medium">Registration Number:</span> {primaryOrder?.registrationNumber || '\u2014'}</p>
+                <p><span className="font-medium">Registration Year:</span> {primaryOrder?.registrationYear || '\u2014'}</p>
+              </div>
             </div>
-          )}
 
-          {!detailsLoading && showCaptchaModal && (
-            <div className="space-y-4 rounded-md border p-4">
-              <p className="text-sm font-medium">Captcha verification required.</p>
-              <p className="text-xs text-muted-foreground">Case Number: {selectedRecord?.case_number ?? '\u2014'}</p>
+            {!orderRecords.length && detailsLoading && (
+              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {detailsPhase ? `${detailsPhase}...` : 'Loading captcha...'}
+              </div>
+            )}
 
-              {captchaImageUrl ? (
-                <img
-                  src={captchaImageUrl}
-                  alt="Captcha"
-                  className="h-20 rounded border bg-white p-1"
-                />
-              ) : (
-                <p className="text-sm text-muted-foreground">Captcha image unavailable.</p>
-              )}
+            {!orderRecords.length && !detailsLoading && captchaImageUrl ? (
+              <img
+                src={captchaImageUrl}
+                alt="Captcha"
+                className="h-20 rounded border bg-white p-1"
+              />
+            ) : null}
 
-              <div className="flex flex-wrap items-end gap-2">
+            {!orderRecords.length && !detailsLoading && !captchaImageUrl && !detailsError ? (
+              <p className="text-sm text-muted-foreground">Captcha image unavailable.</p>
+            ) : null}
+
+            {!orderRecords.length && (
+              <>
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">Enter Captcha</label>
                   <Input
                     value={captchaValue}
                     onChange={(e) => setCaptchaValue(e.target.value)}
                     placeholder="Type captcha"
-                    className="h-9 w-44"
+                    className="h-9"
                   />
                 </div>
+
                 <Button
-                  size="sm"
-                  className="h-9"
-                  disabled={captchaSubmitting}
+                  className="w-full"
+                  disabled={detailsLoading || captchaSubmitting || !captchaImageUrl}
                   onClick={submitCaptcha}
                 >
-                  {captchaSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Search Case'}
+                  {captchaSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit'}
                 </Button>
-              </div>
-            </div>
-          )}
+              </>
+            )}
 
-          {!detailsLoading && detailsError && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              {detailsError}
-            </div>
-          )}
-
-          {!detailsLoading && caseDetails && (
-            <div className="space-y-4 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant={detailsTab === 'overview' ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-8"
-                  onClick={() => setDetailsTab('overview')}
-                >
-                  Overview
-                </Button>
-                <Button
-                  variant={detailsTab === 'hearings' ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-8"
-                  onClick={() => setDetailsTab('hearings')}
-                >
-                  Hearings
-                </Button>
-                <Button
-                  variant={detailsTab === 'orders' ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-8"
-                  onClick={() => setDetailsTab('orders')}
-                >
-                  Orders
-                </Button>
-                <Button
-                  variant={detailsTab === 'raw' ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-8"
-                  onClick={() => setDetailsTab('raw')}
-                >
-                  Raw Response
-                </Button>
-              </div>
-
-              {detailsTab === 'overview' && (
-                <div className="grid grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-2">
-                  <p><span className="font-medium">Petitioner:</span> {caseDetails.petitioner || '\u2014'}</p>
-                  <p><span className="font-medium">Respondent:</span> {caseDetails.respondent || '\u2014'}</p>
-                  <p><span className="font-medium">Judge:</span> {caseDetails.judge || '\u2014'}</p>
-                  <p><span className="font-medium">Stage:</span> {caseDetails.stage || '\u2014'}</p>
-                  <p><span className="font-medium">Next Hearing Date:</span> {fmtDate(caseDetails.nextHearingDate)}</p>
-                  <p><span className="font-medium">Court Hall:</span> {caseDetails.courtHall || '\u2014'}</p>
-                </div>
-              )}
-
-              {detailsTab === 'hearings' && (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-xs">
+            {orderRecords.length > 0 && (
+              <div className="rounded-md border p-4">
+                <h3 className="text-sm font-semibold">Orders</h3>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b bg-muted/40 text-left">
-                        <th className="px-2 py-1">Date</th>
-                        <th className="px-2 py-1">Purpose</th>
-                        <th className="px-2 py-1">Stage</th>
-                        <th className="px-2 py-1">Remarks</th>
+                      <tr className="border-b text-left">
+                        <th className="py-2 pr-3">Order Date</th>
+                        <th className="py-2 pr-3">Order No</th>
+                        <th className="py-2 pr-3">Type</th>
+                        <th className="py-2">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {caseDetails.hearingHistory.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-2 py-3 text-center text-muted-foreground">
-                            No hearing history available.
-                          </td>
-                        </tr>
-                      ) : (
-                        caseDetails.hearingHistory.map((h, i) => (
-                          <tr key={`${h.date}-${i}`} className="border-b last:border-0">
-                            <td className="px-2 py-1 whitespace-nowrap">{h.date || '\u2014'}</td>
-                            <td className="px-2 py-1">{h.purpose || '\u2014'}</td>
-                            <td className="px-2 py-1">{h.stage || '\u2014'}</td>
-                            <td className="px-2 py-1">{h.remarks || '\u2014'}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {detailsTab === 'orders' && (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b bg-muted/40 text-left">
-                        <th className="px-2 py-1">Order Date</th>
-                        <th className="px-2 py-1">Order No.</th>
-                        <th className="px-2 py-1">Order Type</th>
-                        <th className="px-2 py-1">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {caseDetails.orders.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-2 py-3 text-center text-muted-foreground">
-                            No orders available.
-                          </td>
-                        </tr>
-                      ) : (
-                        caseDetails.orders.map((o, i) => (
-                          <tr key={`${o.orderDate}-${i}`} className="border-b last:border-0">
-                            <td className="px-2 py-1 whitespace-nowrap">{o.orderDate || '\u2014'}</td>
-                            <td className="px-2 py-1 whitespace-nowrap">{o.orderNumber || '\u2014'}</td>
-                            <td className="px-2 py-1">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 gap-1 text-xs"
-                                disabled={!o.downloadUrl}
-                                onClick={() => downloadOrderPdf(o)}
-                              >
-                                <Download className="h-3 w-3" />
+                      {orderRecords.map((record) => (
+                        <tr key={`${record.cino}-${record.orderNumber}-${record.orderDate}`} className="border-b last:border-0">
+                          <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(record.orderDate)}</td>
+                          <td className="py-2 pr-3 whitespace-nowrap">{record.orderNumber || '\u2014'}</td>
+                          <td className="py-2 pr-3">{record.documentType || '\u2014'}</td>
+                          <td className="py-2">
+                            <div className="flex flex-wrap gap-2">
+                              <Button size="sm" variant="outline" onClick={() => handleViewPdf(record)}>
+                                View PDF
+                              </Button>
+                              <Button size="sm" onClick={() => handleDownloadPdf(record)}>
                                 Download PDF
                               </Button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              )}
 
-              {detailsTab === 'raw' && (
-                <pre className="max-h-72 overflow-auto rounded-md border bg-muted/20 p-3 text-xs">
-                  {JSON.stringify(caseDetails.rawResponse, null, 2)}
-                </pre>
-              )}
-            </div>
-          )}
+                {primaryOrder && (
+                  <div className="mt-4 rounded-md border bg-muted/20 p-3 text-sm">
+                    <h4 className="font-medium">Order Information</h4>
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <p><span className="font-medium">Order Date:</span> {fmtDate(primaryOrder.orderDate)}</p>
+                      <p><span className="font-medium">Order Number:</span> {primaryOrder.orderNumber || '\u2014'}</p>
+                      <p><span className="font-medium">Document Type:</span> {primaryOrder.documentType || '\u2014'}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {detailsError && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                {detailsError}
+              </div>
+            )}
+
+            {detailsPhase && captchaSubmitting && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+                {detailsPhase}...
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

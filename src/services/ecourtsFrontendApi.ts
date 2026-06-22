@@ -10,6 +10,19 @@ export type EcourtsCaptchaChallenge = {
   captchaImage: string;
 };
 
+export type EcourtsOrderRecord = {
+  caseNo: string;
+  cino: string;
+  orderUrlPath: string;
+  registrationNumber: string;
+  registrationYear: string;
+  typeName: string;
+  orderDate: string;
+  orderNumber: string;
+  documentType: string;
+  pdfUrl: string;
+};
+
 export class EcourtsError extends Error {
   code: 'INVALID_CAPTCHA' | 'SESSION_EXPIRED' | 'UNKNOWN';
 
@@ -21,6 +34,83 @@ export class EcourtsError extends Error {
 
 function clean(value: unknown): string {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+function buildPdfUrl(record: {
+  orderurlpath: string;
+  type_name: string;
+  reg_no: string | number;
+  reg_year: string | number;
+  cino: string;
+}): string {
+  const params = new URLSearchParams({
+    filename: clean(record.orderurlpath),
+    caseno: `${clean(record.type_name)}/${clean(record.reg_no)}/${clean(record.reg_year)}`,
+    cCode: '1',
+    appFlag: 'web',
+    normal_v: '1',
+    cino: clean(record.cino),
+    state_code: '10',
+    flag: 'nojudgement',
+  });
+
+  return `https://hcservices.ecourts.gov.in/hcservices/cases/display_pdf.php?${params.toString()}`;
+}
+
+function parseConRecords(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          try {
+            return JSON.parse(entry) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        }
+        return typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : null;
+      })
+      .filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parseConRecords(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function mapOrderRecord(record: Record<string, unknown>): EcourtsOrderRecord {
+  const pdfUrl = buildPdfUrl({
+    orderurlpath: clean(record.orderurlpath),
+    type_name: clean(record.type_name),
+    reg_no: clean(record.reg_no),
+    reg_year: clean(record.reg_year),
+    cino: clean(record.cino),
+  });
+
+  console.log('ORDER DATA');
+  console.log(record);
+  console.log('PDF URL');
+  console.log(pdfUrl);
+
+  return {
+    caseNo: clean(record.case_no),
+    cino: clean(record.cino),
+    orderUrlPath: clean(record.orderurlpath),
+    registrationNumber: clean(record.reg_no),
+    registrationYear: clean(record.reg_year),
+    typeName: clean(record.type_name),
+    orderDate: clean(record.order_dt),
+    orderNumber: clean(record.order_no),
+    documentType: clean(record.docu_name),
+    pdfUrl,
+  };
 }
 
 async function responseToDataUrl(resp: Response): Promise<string> {
@@ -95,7 +185,7 @@ export async function loadShowRecordsCaptcha(): Promise<EcourtsCaptchaChallenge>
   };
 }
 
-export async function submitShowRecordsCaptcha(args: { captchaValue: string }): Promise<void> {
+export async function submitShowRecordsCaptcha(args: { captchaValue: string }): Promise<EcourtsOrderRecord[]> {
   const payload = new URLSearchParams({
     court_code: '1',
     state_code: '10',
@@ -141,30 +231,19 @@ export async function submitShowRecordsCaptcha(args: { captchaValue: string }): 
     const data = JSON.parse(responseText);
     console.log(data);
 
-    if (Array.isArray(data?.con) && data.con.length > 0) {
+    const records = parseConRecords(data?.con);
+    if (records.length > 0) {
       console.log('PARSED RESULTS');
-      const first = data.con[0];
-      if (typeof first === 'string') {
-        console.log(JSON.parse(first));
-      } else {
-        console.log(first);
-      }
+      console.log(records[0]);
+      return records.map(mapOrderRecord);
     }
 
-    const conValue = data?.con;
-    if (typeof conValue === 'string') {
-      const parsedCon = JSON.parse(conValue);
-      if (Array.isArray(parsedCon) && parsedCon.length > 0) {
-        console.log('PARSED RESULTS');
-        const first = parsedCon[0];
-        if (typeof first === 'string') {
-          console.log(JSON.parse(first));
-        } else {
-          console.log(first);
-        }
-      }
-    }
+    throw new EcourtsError('UNKNOWN', 'No order data returned from showRecords');
   } catch (error) {
     console.error(error);
+    if (error instanceof EcourtsError) {
+      throw error;
+    }
+    throw new EcourtsError('UNKNOWN', 'Unable to parse showRecords response');
   }
 }
