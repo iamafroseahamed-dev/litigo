@@ -14,10 +14,18 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ChevronLeft, ChevronRight, Eye, FileText, Loader2, RefreshCw, X,
+  ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FileText, Loader2, RefreshCw, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TodayMatchedListing } from '@/types';
+
+type CaseOrder = {
+  orderDate: string;
+  orderNumber: string;
+  orderType: string;
+  orderUrl: string;
+  category: 'judgment' | 'interim' | 'other';
+};
 
 type CaseDetails = {
   caseNumber: string;
@@ -30,7 +38,10 @@ type CaseDetails = {
   petitionerAdvocates: string[];
   respondentAdvocates: string[];
   hearingHistory: Array<{ date: string; purpose: string; businessDate: string; remarks: string }>;
-  orders: Array<{ orderDate: string; orderNumber: string; orderType: string; orderUrl: string }>;
+  orders: CaseOrder[];
+  orderCount: number;
+  judgmentCount: number;
+  interimOrderCount: number;
   filingDate: string | null;
   registrationDate: string | null;
   disposalDate: string | null;
@@ -103,6 +114,9 @@ export default function TodaysListingsPage() {
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<TodayMatchedListing | null>(null);
   const [caseDetails, setCaseDetails] = useState<CaseDetails | null>(null);
+  const [orderDownloading, setOrderDownloading] = useState<string | null>(null);
+  const [pdfViewerUrl, setPdfViewerUrl] = useState<string | null>(null);
+  const [pdfViewerTitle, setPdfViewerTitle] = useState('');
 
   // ── Data loading ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -347,34 +361,52 @@ export default function TodaysListingsPage() {
       }
       console.log('[case-details] Parsed:', data);
 
+      // Some API responses nest the payload under `data` / `courtCaseData`.
+      const cc = data.courtCaseData ?? data.data?.courtCaseData ?? data.data ?? data;
+
+      const mapOrders = (
+        list: any[] | undefined,
+        category: CaseOrder['category'],
+      ): CaseOrder[] =>
+        (list ?? []).map((o: Record<string, string>) => ({
+          orderDate: o.orderDate ?? o.order_date ?? '',
+          orderNumber: o.orderNumber ?? o.order_no ?? o.order_number ?? '',
+          orderType: o.orderType ?? o.order_type ?? (category === 'judgment' ? 'JUDGMENT' : category === 'interim' ? 'INTERIM ORDER' : ''),
+          orderUrl: o.orderUrl ?? o.order_url ?? o.url ?? '',
+          category,
+        }));
+
+      const judgmentOrders = mapOrders(cc.judgmentOrders, 'judgment');
+      const interimOrders = mapOrders(cc.interimOrders, 'interim');
+      const legacyOrders = mapOrders(cc.orders ?? data.orders, 'other');
+      const allOrders = [...judgmentOrders, ...interimOrders, ...legacyOrders];
+
       // Map API response to CaseDetails
       const caseDetails: CaseDetails = {
-        caseNumber: data.case_no ?? `${data.case_type ?? ''}/${data.reg_no ?? ''}/${data.reg_year ?? ''}`,
-        cnrNumber: data.cino ?? resolvedCnr,
-        courtName: data.court_name ?? 'Madras High Court',
-        caseStatus: data.case_status ?? '',
-        nextHearingDate: data.next_hearing_date ?? null,
-        petitioners: data.petitioner ?? [],
-        respondents: data.respondent ?? [],
-        petitionerAdvocates: data.pet_adv ?? [],
-        respondentAdvocates: data.res_adv ?? [],
-        hearingHistory: (data.hearing_history ?? []).map((h: Record<string, string>) => ({
-          date: h.hearing_date ?? '',
+        caseNumber: data.case_no ?? cc.case_no ?? `${data.case_type ?? ''}/${data.reg_no ?? ''}/${data.reg_year ?? ''}`,
+        cnrNumber: data.cino ?? cc.cnr ?? data.cnr ?? resolvedCnr,
+        courtName: data.court_name ?? cc.courtName ?? 'Madras High Court',
+        caseStatus: data.case_status ?? cc.caseStatus ?? '',
+        nextHearingDate: data.next_hearing_date ?? cc.nextHearingDate ?? null,
+        petitioners: data.petitioner ?? cc.petitioners ?? [],
+        respondents: data.respondent ?? cc.respondents ?? [],
+        petitionerAdvocates: data.pet_adv ?? cc.petitionerAdvocates ?? [],
+        respondentAdvocates: data.res_adv ?? cc.respondentAdvocates ?? [],
+        hearingHistory: (data.hearing_history ?? cc.hearingHistory ?? []).map((h: Record<string, string>) => ({
+          date: h.hearing_date ?? h.hearingDate ?? '',
           purpose: h.purpose ?? '',
-          businessDate: h.business_date ?? '',
+          businessDate: h.business_date ?? h.businessDate ?? '',
           remarks: h.remarks ?? '',
         })),
-        orders: (data.orders ?? []).map((o: Record<string, string>) => ({
-          orderDate: o.order_date ?? '',
-          orderNumber: o.order_no ?? '',
-          orderType: o.order_type ?? '',
-          orderUrl: o.order_url ?? '',
-        })),
-        filingDate: data.filing_date ?? null,
-        registrationDate: data.reg_date ?? null,
-        disposalDate: data.disposal_date ?? null,
-        disposalNature: data.disposal_nature ?? null,
-        acts: data.acts ?? [],
+        orders: allOrders,
+        orderCount: allOrders.length,
+        judgmentCount: judgmentOrders.length,
+        interimOrderCount: interimOrders.length,
+        filingDate: data.filing_date ?? cc.filingDate ?? null,
+        registrationDate: data.reg_date ?? cc.registrationDate ?? null,
+        disposalDate: data.disposal_date ?? cc.disposalDate ?? null,
+        disposalNature: data.disposal_nature ?? cc.disposalNature ?? null,
+        acts: data.acts ?? cc.acts ?? [],
       };
 
       setCaseDetails(caseDetails);
@@ -386,10 +418,10 @@ export default function TodaysListingsPage() {
           .update({
             case_details_json: caseDetails,
             case_details_last_fetched: new Date().toISOString(),
-            case_status: data.case_status || undefined,
-            petitioner: data.petitioner?.join(', ') || undefined,
-            respondent: data.respondent?.join(', ') || undefined,
-            next_hearing_date: data.next_hearing_date || undefined,
+            case_status: caseDetails.caseStatus || undefined,
+            petitioner: caseDetails.petitioners.join(', ') || undefined,
+            respondent: caseDetails.respondents.join(', ') || undefined,
+            next_hearing_date: caseDetails.nextHearingDate || undefined,
           })
           .eq('id', record.case_id);
       }
@@ -409,6 +441,57 @@ export default function TodaysListingsPage() {
     setDetailsError(null);
     setIsDetailsOpen(true);
     void loadCaseDetails(record);
+  }
+
+  // Resolve an order's download URL via the Supabase Edge Function (keeps API key server-side).
+  async function resolveOrderDownload(order: CaseOrder): Promise<{ url: string; filename: string } | null> {
+    if (!caseDetails?.cnrNumber || !order.orderUrl) {
+      toast.error('Missing CNR or order file reference.');
+      return null;
+    }
+    const { data, error } = await supabase.functions.invoke('download-order', {
+      body: { cnr: caseDetails.cnrNumber, filename: order.orderUrl },
+    });
+    if (error) {
+      toast.error(error.message ?? 'Unable to fetch order.');
+      return null;
+    }
+    if (!data?.success) {
+      toast.error(data?.error ?? data?.message ?? 'Unable to fetch order.');
+      return null;
+    }
+    const url: string = data.downloadUrl ?? data.url ?? '';
+    const filename: string = data.downloadFilename ?? order.orderUrl;
+    if (!url) {
+      toast.error('Order download URL not returned by server.');
+      return null;
+    }
+    return { url, filename };
+  }
+
+  async function handleDownloadOrder(order: CaseOrder) {
+    const key = `${order.category}:${order.orderUrl}`;
+    setOrderDownloading(key);
+    try {
+      const resolved = await resolveOrderDownload(order);
+      if (resolved) window.open(resolved.url, '_blank', 'noopener,noreferrer');
+    } finally {
+      setOrderDownloading(null);
+    }
+  }
+
+  async function handleViewOrder(order: CaseOrder) {
+    const key = `view:${order.category}:${order.orderUrl}`;
+    setOrderDownloading(key);
+    try {
+      const resolved = await resolveOrderDownload(order);
+      if (resolved) {
+        setPdfViewerUrl(resolved.url);
+        setPdfViewerTitle(`${order.orderType || 'Order'} \u2014 ${fmtDate(order.orderDate)}`);
+      }
+    } finally {
+      setOrderDownloading(null);
+    }
   }
 
   return (
@@ -745,33 +828,105 @@ export default function TodaysListingsPage() {
               </div>
 
               <div className="space-y-2">
-                <p className="text-sm font-semibold">Orders</p>
-                {caseDetails.orders.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No orders available.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold">Orders</p>
+                  <Badge variant="secondary" className="text-[10px]">Orders: {caseDetails.orderCount}</Badge>
+                  <Badge variant="success" className="text-[10px]">Judgments: {caseDetails.judgmentCount}</Badge>
+                  <Badge variant="info" className="text-[10px]">Interim Orders: {caseDetails.interimOrderCount}</Badge>
+                </div>
+                {caseDetails.orderCount === 0 ? (
+                  <p className="text-sm text-muted-foreground">No orders available for this case.</p>
                 ) : (
                   <div className="overflow-x-auto rounded-md border">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b bg-muted/40 text-left">
                           <th className="px-2 py-1">Order Date</th>
-                          <th className="px-2 py-1">Order Number</th>
                           <th className="px-2 py-1">Order Type</th>
+                          <th className="px-2 py-1">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {caseDetails.orders.map((o, i) => (
-                          <tr key={i} className="border-b last:border-0">
-                            <td className="px-2 py-1 whitespace-nowrap">{o.orderDate || '\u2014'}</td>
-                            <td className="px-2 py-1">{o.orderNumber || '\u2014'}</td>
-                            <td className="px-2 py-1">{o.orderType || '\u2014'}</td>
-                          </tr>
-                        ))}
+                        {caseDetails.orders.map((o, i) => {
+                          const dlKey = `${o.category}:${o.orderUrl}`;
+                          const viewKey = `view:${o.category}:${o.orderUrl}`;
+                          return (
+                            <tr key={i} className="border-b last:border-0">
+                              <td className="px-2 py-1 whitespace-nowrap">{o.orderDate ? fmtDate(o.orderDate) : '\u2014'}</td>
+                              <td className="px-2 py-1">
+                                <Badge
+                                  variant={o.category === 'judgment' ? 'success' : o.category === 'interim' ? 'info' : 'secondary'}
+                                  className="text-[10px]"
+                                >
+                                  {o.orderType || (o.category === 'judgment' ? 'Judgment' : o.category === 'interim' ? 'Interim Order' : 'Order')}
+                                </Badge>
+                              </td>
+                              <td className="px-2 py-1">
+                                <div className="flex items-center gap-1.5">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1 text-xs"
+                                    disabled={!o.orderUrl || orderDownloading === viewKey}
+                                    onClick={() => handleViewOrder(o)}
+                                  >
+                                    {orderDownloading === viewKey
+                                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                                      : <Eye className="h-3 w-3" />}
+                                    View Order
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1 text-xs"
+                                    disabled={!o.orderUrl || orderDownloading === dlKey}
+                                    onClick={() => handleDownloadOrder(o)}
+                                  >
+                                    {orderDownloading === dlKey
+                                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                                      : <Download className="h-3 w-3" />}
+                                    Download PDF
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
               </div>
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* PDF Order Viewer */}
+      <Dialog open={!!pdfViewerUrl} onOpenChange={(open) => { if (!open) setPdfViewerUrl(null); }}>
+        <DialogContent className="h-[90vh] max-w-5xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              {pdfViewerTitle || 'Order'}
+              {pdfViewerUrl && (
+                <a
+                  href={pdfViewerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" /> Open in new tab
+                </a>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          {pdfViewerUrl && (
+            <iframe
+              src={pdfViewerUrl}
+              title="Order PDF"
+              className="h-full w-full rounded-md border"
+            />
           )}
         </DialogContent>
       </Dialog>
