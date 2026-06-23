@@ -42,6 +42,7 @@ const PAGE_SIZE = 20;
 function NotifBadge({ status }: { status: string | null }) {
   const map: Record<string, { label: string; variant: 'secondary' | 'success' | 'warning' | 'destructive' | 'outline' }> = {
     pending:       { label: 'Pending',       variant: 'warning'     },
+    sent:          { label: 'Sent',          variant: 'success'     },
     notified:      { label: 'Notified',      variant: 'success'     },
     partial:       { label: 'Partial',       variant: 'warning'     },
     failed:        { label: 'Failed',        variant: 'destructive' },
