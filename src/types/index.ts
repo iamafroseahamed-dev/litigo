@@ -197,6 +197,7 @@ export interface TodayMatchedListing {
   item_number: string | null;
   judge_name: string | null;
   stage: string | null;
+  vc_link: string | null;
   petitioner: string | null;
   respondent: string | null;
   match_type: string;

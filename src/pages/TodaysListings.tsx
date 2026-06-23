@@ -11,7 +11,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ChevronLeft, ChevronRight, RefreshCw, X,
+  ChevronLeft, ChevronRight, RefreshCw, Video, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TodayMatchedListing } from '@/types';
@@ -87,7 +87,46 @@ export default function TodaysListingsPage() {
       const { data, error: sbErr } = await supabase
         .from('today_matched_listings')
         .select(`
-          *,
+          id,
+          listed_date,
+          match_date,
+          cause_list_import_date,
+          match_created_at,
+          organization_id,
+          case_id,
+          daily_cause_list_id,
+          case_number,
+          cnr_number,
+          court_hall,
+          item_number,
+          judge_name,
+          stage,
+          vc_link,
+          petitioner,
+          respondent,
+          match_type,
+          match_status,
+          notification_status,
+          latest_case_status,
+          latest_stage,
+          latest_hearing_date,
+          latest_hearing_remarks,
+          latest_business,
+          next_hearing_date,
+          last_order_date,
+          last_order_number,
+          last_order_type,
+          hearing_history,
+          ecourts_last_synced,
+          ecourts_sync_status,
+          ecourts_case_no,
+          cnr_status,
+          ecourts_error,
+          ecourts_synced_at,
+          case_details_json,
+          case_details_last_fetched,
+          created_at,
+          updated_at,
           case:cases(
             id, cnr_number, case_number, district, section,
             cla_party_status, sensitivity, case_status
@@ -100,7 +139,7 @@ export default function TodaysListingsPage() {
         .order('item_number', { ascending: true  });
 
       if (sbErr) throw sbErr;
-      const rows = (data ?? []) as TodayMatchedListing[];
+      const rows = (data ?? []) as unknown as TodayMatchedListing[];
       setListings(rows);
 
       // Listing-history counts
@@ -325,6 +364,7 @@ export default function TodaysListingsPage() {
                   <TableHead className="whitespace-nowrap">Respondent</TableHead>
                   <TableHead className="whitespace-nowrap">Judge</TableHead>
                   <TableHead className="whitespace-nowrap">Stage Status</TableHead>
+                  <TableHead className="w-[96px] whitespace-nowrap text-center">VC Link</TableHead>
                   <TableHead className="whitespace-nowrap">Notification</TableHead>
                 </TableRow>
               </TableHeader>
@@ -332,7 +372,7 @@ export default function TodaysListingsPage() {
               <TableBody>
                 {paginated.length === 0 ? (
                   <TableRow>
-                      <TableCell colSpan={9}
+                      <TableCell colSpan={10}
                       className="py-10 text-center text-muted-foreground">
                       No records match your filters.
                     </TableCell>
@@ -388,6 +428,23 @@ export default function TodaysListingsPage() {
                         <TableCell className="whitespace-nowrap">{record.judge_name ?? '\u2014'}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
                           {record.stage  ?? '\u2014'}
+                        </TableCell>
+                        <TableCell className="w-[96px] whitespace-nowrap text-center">
+                          {record.vc_link ? (
+                            <a
+                              href={record.vc_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open Microsoft Teams Hearing Link"
+                              aria-label="Open Microsoft Teams Hearing Link"
+                              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-input px-2 text-xs font-medium text-primary transition-colors hover:bg-accent hover:text-accent-foreground"
+                            >
+                              <Video className="h-3.5 w-3.5" />
+                              <span>Join VC</span>
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
                           <NotifBadge status={record.notification_status} />
