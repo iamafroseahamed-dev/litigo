@@ -73,7 +73,7 @@ function SummaryCard({ title, value }: { title: string; value: number | string }
 interface MhcOrderDetails {
   caseNumber: string;
   caseType: string;
-  filename: string | null;
+  pdfUrl: string | null;
   judge: string;
   judgmentDate: string;
   petitioner: string;
@@ -180,7 +180,7 @@ export default function TodaysListingsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Fetch MHC case status + order PDF ────────────────────────────────────────
+  // ── Fetch MHC case status + order PDF (via server-side proxy) ───────────────
   async function fetchCaseDetails(record: TodayMatchedListing) {
     const caseNumber = record.case_number;
     if (!caseNumber) return;
@@ -191,54 +191,38 @@ export default function TodaysListingsPage() {
     setOrderError(null);
     setOrderDetails(null);
 
-    const parts = caseNumber.split('/');
-    if (parts.length < 3) {
-      setOrderError('Invalid case number format. Expected: TYPE/NUMBER/YEAR');
-      setOrderLoading(false);
-      return;
-    }
-
-    const [caseType, caseNo, caseYear] = parts;
-
-    const payload = new URLSearchParams({
-      cno:        caseNo,
-      cyear:      caseYear,
-      reportable: 'A',
-      casetype:   caseType,
-    });
-
     try {
-      const response = await fetch(
-        'https://www.mhc.tn.gov.in/judis/index.php/casestatus/viewstatus',
-        {
-          method: 'POST',
-          headers: {
-            'X-Requested-With': 'XMLHttpRequest',
-            'Content-Type':     'application/x-www-form-urlencoded; charset=UTF-8',
-          },
-          body: payload.toString(),
-        },
-      );
+      const response = await fetch('/api/mhc/case-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_number: caseNumber }),
+      });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-
-      const data = await response.json();
+      const result = await response.json();
 
       console.log('MHC CASE STATUS RESPONSE');
-      console.log(data);
+      console.log(result);
 
-      const filename = data.filename || null;
-      const pdfUrl = filename
-        ? `https://www.mhc.tn.gov.in/judis/tpdf/${filename}.pdf`
-        : null;
+      if (!result.success) {
+        throw new Error(result.message || 'MHC API returned an error.');
+      }
+
+      const orders: Record<string, string>[] = result.orders ?? [];
+      if (orders.length === 0) {
+        throw new Error('No order data returned for this case.');
+      }
+
+      // Use the first (latest) order entry
+      const data = orders[0];
+      const pdfUrl = (data.pdf_url as string | null | undefined) || null;
 
       console.log('PDF URL');
       console.log(pdfUrl);
 
       setOrderDetails({
         caseNumber:   data.caseno     ?? caseNumber,
-        caseType:     data.casetype_t ?? caseType,
-        filename,
+        caseType:     data.casetype_t ?? '',
+        pdfUrl,
         judge:        data.jud1    ?? '',
         judgmentDate: data.juddate ?? '',
         petitioner:   data.petname ?? '',
@@ -561,9 +545,7 @@ export default function TodaysListingsPage() {
           )}
 
           {!orderLoading && !orderError && orderDetails && (() => {
-            const pdfUrl = orderDetails.filename
-              ? `https://www.mhc.tn.gov.in/judis/tpdf/${orderDetails.filename}.pdf`
-              : null;
+            const pdfUrl = orderDetails.pdfUrl;
             const fmtJudgmentDate = orderDetails.judgmentDate
               ? fmtDate(orderDetails.judgmentDate.replace(/\//g, '-'))
               : '\u2014';
