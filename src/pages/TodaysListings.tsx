@@ -11,8 +11,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ChevronLeft, ChevronRight, Video, X,
+  ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Loader2, Video, X,
 } from 'lucide-react';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import type { TodayMatchedListing } from '@/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -65,6 +68,18 @@ function SummaryCard({ title, value }: { title: string; value: number | string }
   );
 }
 
+// ── MHC Order Details ──────────────────────────────────────────────────────────
+
+interface MhcOrderDetails {
+  caseNumber: string;
+  caseType: string;
+  filename: string | null;
+  judge: string;
+  judgmentDate: string;
+  petitioner: string;
+  respondent: string;
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function TodaysListingsPage() {
@@ -74,6 +89,13 @@ export default function TodaysListingsPage() {
   const [listingHistoryMap, setListingHistoryMap] = useState<
     Map<string, { count: number; firstListed: string; lastListed: string }>
   >(new Map());
+
+  // ── Order details modal ───────────────────────────────────────────────────────
+  const [orderModalOpen, setOrderModalOpen]       = useState(false);
+  const [selectedRecord, setSelectedRecord]       = useState<TodayMatchedListing | null>(null);
+  const [orderDetails, setOrderDetails]           = useState<MhcOrderDetails | null>(null);
+  const [orderLoading, setOrderLoading]           = useState(false);
+  const [orderError, setOrderError]               = useState<string | null>(null);
 
   // ── Filters ──────────────────────────────────────────────────────────────────
   const todayUtc = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -157,6 +179,77 @@ export default function TodaysListingsPage() {
   }, [todayUtc]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // ── Fetch MHC case status + order PDF ────────────────────────────────────────
+  async function fetchCaseDetails(record: TodayMatchedListing) {
+    const caseNumber = record.case_number;
+    if (!caseNumber) return;
+
+    setSelectedRecord(record);
+    setOrderModalOpen(true);
+    setOrderLoading(true);
+    setOrderError(null);
+    setOrderDetails(null);
+
+    const parts = caseNumber.split('/');
+    if (parts.length < 3) {
+      setOrderError('Invalid case number format. Expected: TYPE/NUMBER/YEAR');
+      setOrderLoading(false);
+      return;
+    }
+
+    const [caseType, caseNo, caseYear] = parts;
+
+    const payload = new URLSearchParams({
+      cno:        caseNo,
+      cyear:      caseYear,
+      reportable: 'A',
+      casetype:   caseType,
+    });
+
+    try {
+      const response = await fetch(
+        'https://www.mhc.tn.gov.in/judis/index.php/casestatus/viewstatus',
+        {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type':     'application/x-www-form-urlencoded; charset=UTF-8',
+          },
+          body: payload.toString(),
+        },
+      );
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+      const data = await response.json();
+
+      console.log('MHC CASE STATUS RESPONSE');
+      console.log(data);
+
+      const filename = data.filename || null;
+      const pdfUrl = filename
+        ? `https://www.mhc.tn.gov.in/judis/tpdf/${filename}.pdf`
+        : null;
+
+      console.log('PDF URL');
+      console.log(pdfUrl);
+
+      setOrderDetails({
+        caseNumber:   data.caseno     ?? caseNumber,
+        caseType:     data.casetype_t ?? caseType,
+        filename,
+        judge:        data.jud1    ?? '',
+        judgmentDate: data.juddate ?? '',
+        petitioner:   data.petname ?? '',
+        respondent:   data.resname ?? '',
+      });
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : 'Failed to fetch case details.');
+    } finally {
+      setOrderLoading(false);
+    }
+  }
 
   // ── Derived values ────────────────────────────────────────────────────────────
   const judgeOptions = useMemo(
@@ -308,13 +401,14 @@ export default function TodaysListingsPage() {
                   <TableHead className="whitespace-nowrap">Stage Status</TableHead>
                   <TableHead className="w-[96px] whitespace-nowrap text-center">VC Link</TableHead>
                   <TableHead className="whitespace-nowrap">Notification</TableHead>
+                  <TableHead className="whitespace-nowrap">Details</TableHead>
                 </TableRow>
               </TableHeader>
 
               <TableBody>
                 {paginated.length === 0 ? (
                   <TableRow>
-                      <TableCell colSpan={10}
+                      <TableCell colSpan={11}
                       className="py-10 text-center text-muted-foreground">
                       No records match your filters.
                     </TableCell>
@@ -391,6 +485,18 @@ export default function TodaysListingsPage() {
                         <TableCell className="whitespace-nowrap">
                           <NotifBadge status={record.notification_status} />
                         </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 text-xs"
+                            disabled={!record.case_number}
+                            onClick={() => fetchCaseDetails(record)}
+                          >
+                            <FileText className="h-3 w-3" />
+                            View Details
+                          </Button>
+                        </TableCell>
                       </TableRow>,
                     ].filter(Boolean);
                   })
@@ -422,6 +528,139 @@ export default function TodaysListingsPage() {
           )}
         </>
       )}
+
+      {/* ── MHC Order Details Modal ── */}
+      <Dialog open={orderModalOpen} onOpenChange={open => {
+        setOrderModalOpen(open);
+        if (!open) { setSelectedRecord(null); setOrderDetails(null); setOrderError(null); }
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Case Details
+              {selectedRecord?.case_number && (
+                <span className="ml-1 font-mono text-sm font-normal text-muted-foreground">
+                  — {selectedRecord.case_number}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {orderLoading && (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Fetching case details…
+            </div>
+          )}
+
+          {!orderLoading && orderError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {orderError}
+            </div>
+          )}
+
+          {!orderLoading && !orderError && orderDetails && (() => {
+            const pdfUrl = orderDetails.filename
+              ? `https://www.mhc.tn.gov.in/judis/tpdf/${orderDetails.filename}.pdf`
+              : null;
+            const fmtJudgmentDate = orderDetails.judgmentDate
+              ? fmtDate(orderDetails.judgmentDate.replace(/\//g, '-'))
+              : '\u2014';
+            return (
+              <div className="space-y-5">
+                {/* Case Information */}
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Case Information
+                  </h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Case Number</dt>
+                      <dd className="font-mono font-medium">{orderDetails.caseNumber}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Case Type</dt>
+                      <dd className="font-medium">{orderDetails.caseType || '\u2014'}</dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-xs text-muted-foreground">Petitioner</dt>
+                      <dd className="font-medium">{orderDetails.petitioner || '\u2014'}</dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-xs text-muted-foreground">Respondent</dt>
+                      <dd className="font-medium">{orderDetails.respondent || '\u2014'}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                {/* Judge Information */}
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Judge Information
+                  </h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div className="col-span-2">
+                      <dt className="text-xs text-muted-foreground">Judge</dt>
+                      <dd className="font-medium">{orderDetails.judge || '\u2014'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Judgment Date</dt>
+                      <dd className="font-medium">{fmtJudgmentDate}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                {/* Order Information */}
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Order Information
+                  </h3>
+                  {pdfUrl ? (
+                    <p className="text-sm text-muted-foreground">
+                      Order PDF is available for this case.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No judgment/order PDF available for this case.
+                    </p>
+                  )}
+                </section>
+
+                {/* Actions */}
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    disabled={!pdfUrl}
+                    onClick={() => pdfUrl && window.open(pdfUrl, '_blank')}
+                    className="gap-1.5"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View Order
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!pdfUrl}
+                    onClick={() => {
+                      if (!pdfUrl) return;
+                      const link = document.createElement('a');
+                      link.href = pdfUrl;
+                      link.download = `${orderDetails.caseNumber}.pdf`;
+                      link.click();
+                    }}
+                    className="gap-1.5"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download Order
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
