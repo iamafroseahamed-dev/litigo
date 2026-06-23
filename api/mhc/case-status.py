@@ -18,8 +18,8 @@ import requests
 # Suppress SSL warnings without requiring urllib3 as a top-level import
 warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
-MHC_VIEWSTATUS = 'https://mhc.tn.gov.in/judis/index.php/casestatus/viewstatus'
-MHC_VIEWPDF    = 'https://mhc.tn.gov.in/judis/index.php/casestatus/viewpdf'
+MHC_VIEWSTATUS = 'https://www.mhc.tn.gov.in/judis/index.php/casestatus/viewstatus'
+MHC_VIEWPDF    = 'https://www.mhc.tn.gov.in/judis/index.php/casestatus/viewpdf'
 
 
 def _parse(case_number: str) -> Optional[Tuple[str, str, str]]:
@@ -69,23 +69,26 @@ class handler(BaseHTTPRequestHandler):
                 MHC_VIEWSTATUS,
                 data={'cno': cno, 'cyear': cyear, 'reportable': 'A', 'casetype': casetype},
                 headers={
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://mhc.tn.gov.in/',
-                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Referer':         'https://www.mhc.tn.gov.in/',
+                    'Origin':          'https://www.mhc.tn.gov.in',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept':          'application/json, text/javascript, */*; q=0.01',
+                    'Content-Type':    'application/x-www-form-urlencoded; charset=UTF-8',
                 },
-                timeout=(10, 20),
+                timeout=(15, 25),
                 verify=False,
             )
             resp.raise_for_status()
             data = resp.json()
         except requests.exceptions.Timeout:
-            self._json({'success': False, 'message': 'MHC server timed out. This endpoint only works when Litigo is running locally.'}, 504)
+            self._json({'success': False, 'message': 'MHC server did not respond in time. Please try again.'}, 504)
             return
-        except requests.exceptions.ConnectionError as exc:
-            self._json({'success': False, 'message': 'Cannot reach MHC from this server. This endpoint works when running Litigo locally.'}, 503)
+        except requests.exceptions.ConnectionError:
+            self._json({'success': False, 'message': 'Could not reach the MHC server. Please try again later.'}, 503)
             return
         except requests.RequestException as exc:
-            self._json({'success': False, 'message': f'MHC unavailable: {exc}'}, 503)
+            self._json({'success': False, 'message': f'MHC request failed: {exc}'}, 503)
             return
         except Exception as exc:
             self._json({'success': False, 'message': f'Failed to parse MHC response: {exc}'}, 502)
