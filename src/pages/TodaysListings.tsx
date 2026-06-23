@@ -11,9 +11,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ChevronLeft, ChevronRight, RefreshCw, Video, X,
+  ChevronLeft, ChevronRight, Video, X,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import type { TodayMatchedListing } from '@/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -61,7 +60,6 @@ export default function TodaysListingsPage() {
   const [loading, setLoading]             = useState(true);
   const [error,   setError]               = useState<string | null>(null);
   const [listings, setListings]           = useState<TodayMatchedListing[]>([]);
-  const [isRefreshing, setIsRefreshing]   = useState(false);
   const [listingHistoryMap, setListingHistoryMap] = useState<
     Map<string, { count: number; firstListed: string; lastListed: string }>
   >(new Map());
@@ -81,46 +79,7 @@ export default function TodaysListingsPage() {
       const { data, error: sbErr } = await supabase
         .from('today_matched_listings')
         .select(`
-          id,
-          listed_date,
-          match_date,
-          cause_list_import_date,
-          match_created_at,
-          organization_id,
-          case_id,
-          daily_cause_list_id,
-          case_number,
-          cnr_number,
-          court_hall,
-          item_number,
-          judge_name,
-          stage,
-          vc_link,
-          petitioner,
-          respondent,
-          match_type,
-          match_status,
-          notification_status,
-          latest_case_status,
-          latest_stage,
-          latest_hearing_date,
-          latest_hearing_remarks,
-          latest_business,
-          next_hearing_date,
-          last_order_date,
-          last_order_number,
-          last_order_type,
-          hearing_history,
-          ecourts_last_synced,
-          ecourts_sync_status,
-          ecourts_case_no,
-          cnr_status,
-          ecourts_error,
-          ecourts_synced_at,
-          case_details_json,
-          case_details_last_fetched,
-          created_at,
-          updated_at,
+          *,
           case:cases(
             id, cnr_number, case_number, district, section,
             cla_party_status, sensitivity, case_status
@@ -232,31 +191,6 @@ export default function TodaysListingsPage() {
             Today&apos;s tracked cases from the Madras High Court cause list.
           </p>
         </div>
-        <Button
-          variant="outline" size="sm" className="h-9 gap-1"
-          disabled={loading || isRefreshing}
-          onClick={async () => {
-            setIsRefreshing(true);
-            try {
-              await fetch('/api/todays-cause-list?refresh=1').catch(() => null);
-              const res  = await fetch('/api/match-todays-listings', { method: 'POST' });
-              const data = await res.json();
-              await fetchData();
-              toast.success(
-                data.matched_count != null
-                  ? `${data.matched_count} records matched for ${data.match_date ?? todayUtc}.`
-                  : 'Listings refreshed.',
-              );
-            } catch {
-              toast.error('Unable to refresh listings. Please try again.');
-            } finally {
-              setIsRefreshing(false);
-            }
-          }}
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-          {isRefreshing ? 'Refreshing\u2026' : 'Refresh'}
-        </Button>
       </div>
 
       {/* Summary cards */}
@@ -305,9 +239,6 @@ export default function TodaysListingsPage() {
       {!loading && !error && listings.length === 0 && (
         <div className="flex flex-col items-center justify-center py-24 text-center text-muted-foreground">
           <p className="text-base font-medium">No matched listings found for today.</p>
-          <p className="mt-1 text-sm">
-            Click <strong>Refresh</strong> to run the matching job for today.
-          </p>
         </div>
       )}
 
