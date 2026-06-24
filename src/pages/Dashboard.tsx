@@ -1,0 +1,345 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Briefcase, Clock, CheckCircle2, Gavel, ShieldAlert, Landmark,
+  MapPin, Users, Layers, CalendarClock, AlertTriangle, Scale,
+} from 'lucide-react';
+import { fetchExecutiveAnalytics } from '@/lib/dashboardQueries';
+import { TNDistrictMap } from '@/components/TNDistrictMap';
+import { advocateStatusClasses } from '@/lib/caseManagement';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '\u2014';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function priorityPill(p: 'High' | 'Medium' | 'Low'): string {
+  if (p === 'High') return 'bg-red-100 text-red-700';
+  if (p === 'Medium') return 'bg-amber-100 text-amber-700';
+  return 'bg-slate-100 text-slate-600';
+}
+
+function KpiCard({
+  label, value, icon: Icon, accent, loading, onClick, danger,
+}: {
+  label: string;
+  value: number;
+  icon: React.ComponentType<{ className?: string }>;
+  accent: string;
+  loading: boolean;
+  onClick?: () => void;
+  danger?: boolean;
+}) {
+  const body = (
+    <Card className={`${onClick ? 'h-full transition-colors hover:bg-muted/40' : 'h-full'} ${danger && value > 0 ? 'border-red-300 bg-red-50/40' : ''}`}>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <Icon className={`h-4 w-4 ${accent}`} />
+        </div>
+        {loading
+          ? <Skeleton className="mt-2 h-8 w-16" />
+          : <p className={`mt-1 text-3xl font-bold ${accent}`}>{value.toLocaleString('en-IN')}</p>}
+      </CardContent>
+    </Card>
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="text-left" aria-label={label}>
+        {body}
+      </button>
+    );
+  }
+  return body;
+}
+
+function DrillMetric({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className="rounded-md border px-3 py-2">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className={`text-xl font-bold ${color}`}>{value.toLocaleString('en-IN')}</p>
+    </div>
+  );
+}
+
+function StatCard({ label, value, accent, loading }: { label: string; value: number; accent: string; loading: boolean }) {
+  return (
+    <Card>
+      <CardContent className="px-4 py-4 text-center">
+        {loading
+          ? <Skeleton className="mx-auto h-7 w-12" />
+          : <p className={`text-2xl font-bold ${accent}`}>{value.toLocaleString('en-IN')}</p>}
+        <p className="mt-1 text-[11px] text-muted-foreground">{label}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const navigate = useNavigate();
+  const exec = useQuery({ queryKey: ['executive-analytics'], queryFn: fetchExecutiveAnalytics });
+
+  const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null);
+
+  const a = exec.data;
+  const kp = a?.kpis;
+  const drill = selectedDistrict ? a?.districtDetails[selectedDistrict] : undefined;
+
+  return (
+    <div className="space-y-6 p-6">
+      <div>
+        <h1 className="text-xl font-semibold">Welcome to Adalat360</h1>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Actionable litigation insight — which cases need attention, which hearings are coming, who owns each case.
+        </p>
+      </div>
+
+      {exec.error && (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {(exec.error as Error).message}
+        </p>
+      )}
+
+      {/* Executive Summary */}
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Executive Summary</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <KpiCard label="Total Cases"     value={kp?.totalCases ?? 0}     icon={Briefcase}    accent="text-slate-700"   loading={exec.isLoading} onClick={() => navigate('/cases')} />
+          <KpiCard label="Pending Cases"   value={kp?.pendingCases ?? 0}   icon={Clock}        accent="text-amber-600"   loading={exec.isLoading} />
+          <KpiCard label="Disposed Cases"  value={kp?.disposedCases ?? 0}  icon={CheckCircle2} accent="text-emerald-600" loading={exec.isLoading} />
+          <KpiCard label="Active Cases"    value={kp?.activeCases ?? 0}    icon={Gavel}        accent="text-blue-600"    loading={exec.isLoading} />
+          <KpiCard label="Sensitive Cases" value={kp?.sensitiveCases ?? 0} icon={ShieldAlert}  accent="text-rose-600"    loading={exec.isLoading} />
+          <KpiCard label="CLA Party Cases" value={kp?.claPartyCases ?? 0}  icon={Landmark}     accent="text-indigo-600"  loading={exec.isLoading} />
+        </div>
+      </div>
+
+      {/* Tamil Nadu Litigation Heat Map + District drill-down */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <TNDistrictMap
+            districts={a?.districts ?? []}
+            details={a?.districtDetails ?? {}}
+            selected={selectedDistrict}
+            onSelect={(d) => setSelectedDistrict(d === selectedDistrict ? null : d)}
+            loading={exec.isLoading}
+          />
+        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <MapPin className="h-4 w-4 text-blue-600" /> District Drill-Down
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {selectedDistrict ? selectedDistrict : 'Select a district on the heat map'}
+            </p>
+          </CardHeader>
+          <CardContent>
+            {!drill ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No district selected.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <DrillMetric label="Total Cases"       value={drill.total}            color="text-slate-700" />
+                <DrillMetric label="Pending"           value={drill.pending}          color="text-amber-600" />
+                <DrillMetric label="Disposed"          value={drill.disposed}         color="text-emerald-600" />
+                <DrillMetric label="Ready For Hearing" value={drill.readyForHearing}  color="text-emerald-600" />
+                <DrillMetric label="Counter Pending"   value={drill.counterPending}   color="text-amber-600" />
+                <DrillMetric label="Documents Awaited" value={drill.documentsAwaited} color="text-orange-600" />
+                <DrillMetric label="Upcoming Hearings" value={drill.upcomingHearings} color="text-indigo-600" />
+                <DrillMetric label="Advocates"         value={drill.advocates}        color="text-blue-600" />
+                <DrillMetric label="Open Tasks"        value={drill.openTasks}        color="text-slate-700" />
+                <DrillMetric label="Overdue Tasks"     value={drill.overdueTasks}     color="text-red-600" />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Advocate Performance (case-level) */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4" /> Advocate Performance</CardTitle>
+          <p className="text-xs text-muted-foreground">Case-level workload from cases.assigned_advocate_name (excludes task assignees)</p>
+        </CardHeader>
+        <CardContent className="p-0">
+          {exec.isLoading ? (
+            <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+          ) : (a?.advocates ?? []).length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No advocate data.</p>
+          ) : (
+            <div className="max-h-[440px] overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-background">
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Advocate</th>
+                    <th className="px-3 py-2 text-right font-medium">Assigned Cases</th>
+                    <th className="px-3 py-2 text-right font-medium">Ready For Hearing</th>
+                    <th className="px-3 py-2 text-right font-medium">Pending Documents</th>
+                    <th className="px-3 py-2 text-right font-medium">Counter Pending</th>
+                    <th className="px-3 py-2 text-right font-medium">Upcoming Hearings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(a?.advocates ?? []).map((r, i) => (
+                    <tr key={`${r.advocate}-${i}`} className="border-b last:border-0">
+                      <td className="px-3 py-2">{r.advocate}</td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{r.assignedCases}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{r.readyForHearing}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-orange-600">{r.documentsAwaited}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-amber-600">{r.counterPending}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-indigo-600">{r.upcomingHearings}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Section → Advocate Mapping */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><Layers className="h-4 w-4" /> Section → Advocate Mapping</CardTitle>
+          <p className="text-xs text-muted-foreground">Case-level: section &amp; assigned advocate (cases.section + cases.assigned_advocate_name)</p>
+        </CardHeader>
+        <CardContent className="p-0">
+          {exec.isLoading ? (
+            <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+          ) : (a?.sectionAdvocates ?? []).length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No section-advocate data.</p>
+          ) : (
+            <div className="max-h-[360px] overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-background">
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Section</th>
+                    <th className="px-3 py-2 font-medium">Assigned Advocate</th>
+                    <th className="px-3 py-2 text-right font-medium">Total Cases</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(a?.sectionAdvocates ?? []).map((r, i) => (
+                    <tr key={`${r.section}-${r.advocate}-${i}`} className="border-b last:border-0">
+                      <td className="px-3 py-2">{r.section}</td>
+                      <td className="px-3 py-2">{r.advocate}</td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{r.assignedCases}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Upcoming Hearings Requiring Action + Overdue Task Tracker */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><CalendarClock className="h-4 w-4 text-indigo-600" /> Upcoming Hearings Requiring Action</CardTitle>
+            <p className="text-xs text-muted-foreground">Next 30 days</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {exec.isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+            ) : (a?.upcomingHearings ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">No upcoming hearings.</p>
+            ) : (
+              <div className="max-h-[420px] overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-background">
+                    <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">Case Number</th>
+                      <th className="px-3 py-2 font-medium">Hearing Date</th>
+                      <th className="px-3 py-2 font-medium">Advocate</th>
+                      <th className="px-3 py-2 font-medium">Advocate Status</th>
+                      <th className="px-3 py-2 font-medium">Priority</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(a?.upcomingHearings ?? []).map(r => (
+                      <tr key={r.caseId} className="border-b last:border-0">
+                        <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{r.caseNumber ?? '\u2014'}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{fmtDate(r.hearingDate)}</td>
+                        <td className="px-3 py-2">{r.advocate ?? '\u2014'}</td>
+                        <td className="px-3 py-2">
+                          {r.advocateStatus
+                            ? <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${advocateStatusClasses(r.advocateStatus)}`}>{r.advocateStatus}</span>
+                            : <span className="text-muted-foreground">{'\u2014'}</span>}
+                        </td>
+                        <td className="px-3 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${priorityPill(r.priority)}`}>{r.priority}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-red-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base text-red-600"><AlertTriangle className="h-4 w-4" /> Overdue Task Tracker</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {exec.isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+            ) : (a?.overdueTasks ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">No overdue tasks.</p>
+            ) : (
+              <div className="max-h-[420px] overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-background">
+                    <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">Task</th>
+                      <th className="px-3 py-2 font-medium">Assigned To</th>
+                      <th className="px-3 py-2 font-medium">Due Date</th>
+                      <th className="px-3 py-2 text-right font-medium">Days Overdue</th>
+                      <th className="px-3 py-2 font-medium">Related Case</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(a?.overdueTasks ?? []).map(r => (
+                      <tr key={r.id} className="border-b bg-red-50/40 last:border-0">
+                        <td className="max-w-[180px] truncate px-3 py-2" title={r.task}>{r.task}</td>
+                        <td className="px-3 py-2">{r.assignedTo ?? '\u2014'}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{fmtDate(r.dueDate)}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums text-red-600">{r.daysOverdue}</td>
+                        <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{r.caseNumber ?? '\u2014'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Advocate Status Analytics */}
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <Scale className="h-4 w-4 text-emerald-600" />
+          <p className="text-sm font-semibold">Advocate Status Analytics</p>
+          <span className="text-xs text-muted-foreground">Case readiness across the portfolio</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <StatCard label="Ready For Hearing"        value={kp?.readyForHearing ?? 0}     accent="text-emerald-600" loading={exec.isLoading} />
+          <StatCard label="Documents Awaited"        value={kp?.documentsAwaited ?? 0}    accent="text-orange-600"  loading={exec.isLoading} />
+          <StatCard label="Counter Affidavit Pending" value={kp?.counterPending ?? 0}     accent="text-amber-600"   loading={exec.isLoading} />
+          <StatCard label="Legal Opinion Pending"    value={kp?.legalOpinionPending ?? 0} accent="text-blue-600"    loading={exec.isLoading} />
+          <StatCard label="Compliance Pending"       value={kp?.compliancePending ?? 0}   accent="text-rose-600"    loading={exec.isLoading} />
+        </div>
+      </div>
+    </div>
+  );
+}
