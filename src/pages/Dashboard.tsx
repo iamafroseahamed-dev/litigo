@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import {
   Briefcase, Clock, CheckCircle2, CalendarDays, CalendarClock, Gavel,
   ChevronLeft, ChevronRight, ListTodo, AlertTriangle, Link2,
-  MapPin, Users, Trophy, Layers,
+  MapPin, Users, Trophy, Layers, FileText, FolderOpen, ShieldAlert,
 } from 'lucide-react';
 import {
   fetchCaseStatusBreakdown, fetchDisposalOutcomes,
@@ -331,6 +331,17 @@ export default function DashboardPage() {
         <KpiCard label="Overdue Tasks"      value={kp?.overdueTasks ?? 0}      icon={AlertTriangle} accent="text-red-600"    loading={exec.isLoading} danger />
       </div>
 
+      {/* Row 1b — Advocate (internal) readiness KPI cards */}
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Litigation Readiness (Advocate Status)</p>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard label="Ready For Hearing"  value={kp?.readyForHearing ?? 0}   icon={Gavel}       accent="text-emerald-600" loading={exec.isLoading} />
+          <KpiCard label="Counter Pending"    value={kp?.counterPending ?? 0}    icon={FileText}    accent="text-amber-600"   loading={exec.isLoading} />
+          <KpiCard label="Documents Awaited"  value={kp?.documentsAwaited ?? 0}  icon={FolderOpen}  accent="text-orange-600"  loading={exec.isLoading} />
+          <KpiCard label="Compliance Pending" value={kp?.compliancePending ?? 0} icon={ShieldAlert} accent="text-rose-600"    loading={exec.isLoading} />
+        </div>
+      </div>
+
       {/* Tamil Nadu Litigation Heat Map + District drill-down */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -358,6 +369,9 @@ export default function DashboardPage() {
                 <DrillMetric label="Total Cases"       value={drill.total}            color="text-slate-700" />
                 <DrillMetric label="Pending"           value={drill.pending}          color="text-amber-600" />
                 <DrillMetric label="Disposed"          value={drill.disposed}         color="text-emerald-600" />
+                <DrillMetric label="Ready For Hearing" value={drill.readyForHearing}  color="text-emerald-600" />
+                <DrillMetric label="Counter Pending"   value={drill.counterPending}   color="text-amber-600" />
+                <DrillMetric label="Documents Awaited" value={drill.documentsAwaited} color="text-orange-600" />
                 <DrillMetric label="Upcoming Hearings" value={drill.upcomingHearings} color="text-indigo-600" />
                 <DrillMetric label="Advocates"         value={drill.advocates}        color="text-blue-600" />
                 <DrillMetric label="Open Tasks"        value={drill.openTasks}        color="text-slate-700" />
