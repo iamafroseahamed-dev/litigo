@@ -502,7 +502,7 @@ def _build_messages(match: Dict, recipient_name: str) -> Tuple[str, str, str, st
     resp  = match.get('respondent')  or '\u2014'
     stage = match.get('stage')       or '\u2014'
 
-    email_subject = f'Litigo Alert \u2013 Case Listed Today: {cn}'
+    email_subject = f'Adalat360 Daily Listing Alert \u2013 Case Listed Today: {cn}'
     email_body = (
         f'Dear {recipient_name},\n\n'
         f'A tracked case has been listed in the court cause list.\n\n'
@@ -515,20 +515,20 @@ def _build_messages(match: Dict, recipient_name: str) -> Tuple[str, str, str, st
         f'Petitioner: {pet}\n'
         f'Respondent: {resp}\n'
         f'Stage: {stage}\n\n'
-        f'Please login to Litigo for complete details.\n\n'
-        f'Regards,\nLitigo'
+        f'Please login to Adalat360 for complete details.\n\n'
+        f'Regards,\nAdalat360'
     )
     sms_body = (
-        f'Litigo Alert\n'
+        f'Adalat360 Alert\n'
         f'Case: {cn}\n'
         f'Listed Date: {date}\n'
         f'Court Hall: {hall}\n'
         f'Item No: {item}\n'
         f'Judge: {judge}\n'
-        f'Please login to Litigo for details.'
+        f'Please login to Adalat360 for details.'
     )
     wa_body = (
-        f'\u2696\ufe0f Litigo Alert\n\n'
+        f'⚖️ Adalat360 Alert\n\n'
         f'A tracked case has been listed.\n\n'
         f'Case Number:\n{cn}\n\n'
         f'CNR Number:\n{cnr}\n\n'
@@ -536,7 +536,7 @@ def _build_messages(match: Dict, recipient_name: str) -> Tuple[str, str, str, st
         f'Court Hall:\n{hall}\n\n'
         f'Item Number:\n{item}\n\n'
         f'Judge:\n{judge}\n\n'
-        f'Please login to Litigo for details.'
+        f'Please login to Adalat360 for details.'
     )
     return email_subject, email_body, sms_body, wa_body
 
