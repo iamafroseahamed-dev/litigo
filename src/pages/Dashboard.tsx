@@ -310,50 +310,86 @@ export default function DashboardPage() {
         </p>
       )}
 
-      {/* Row 1 — KPI cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard label="Total Cases"          value={k?.total_cases ?? 0}            icon={Briefcase}     accent="text-slate-700" loading={kpis.isLoading} onClick={() => navigate('/cases')} />
-        <KpiCard label="Pending Cases"        value={k?.pending_cases ?? 0}          icon={Clock}         accent="text-amber-600" loading={kpis.isLoading} />
-        <KpiCard label="Disposed Cases"       value={k?.disposed_cases ?? 0}         icon={CheckCircle2}  accent="text-emerald-600" loading={kpis.isLoading} />
-        <KpiCard label="Cases Listed Today"   value={k?.cases_listed_today ?? 0}     icon={CalendarDays}  accent="text-blue-600" loading={kpis.isLoading} onClick={() => navigate('/todays-listings')} />
-        <KpiCard label="Hearings (7 Days)"    value={k?.hearings_within_7_days ?? 0} icon={CalendarClock} accent="text-orange-600" loading={kpis.isLoading} onClick={() => navigate('/upcoming-hearings')} />
-        <KpiCard label="Hearings Today"       value={k?.hearings_today ?? 0}         icon={Gavel}         accent="text-red-600" loading={kpis.isLoading} onClick={() => navigate('/upcoming-hearings')} />
+      {/* Row 1 — Executive KPI cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        <KpiCard label="Total Cases"        value={kp?.totalCases ?? 0}        icon={Briefcase}     accent="text-slate-700"  loading={exec.isLoading} onClick={() => navigate('/cases')} />
+        <KpiCard label="Pending Cases"      value={kp?.pendingCases ?? 0}      icon={Clock}         accent="text-amber-600"  loading={exec.isLoading} />
+        <KpiCard label="Disposed Cases"     value={kp?.disposedCases ?? 0}     icon={CheckCircle2}  accent="text-emerald-600" loading={exec.isLoading} />
+        <KpiCard label="Listed Today"       value={kp?.casesListedToday ?? 0}  icon={CalendarDays}  accent="text-blue-600"   loading={exec.isLoading} onClick={() => navigate('/todays-listings')} />
+        <KpiCard label="Upcoming (30 Days)" value={kp?.upcomingHearings30 ?? 0} icon={CalendarClock} accent="text-indigo-600" loading={exec.isLoading} onClick={() => navigate('/upcoming-hearings')} />
+        <KpiCard label="Open Tasks"         value={kp?.openTasks ?? 0}         icon={ListTodo}      accent="text-slate-700"  loading={exec.isLoading} />
+        <KpiCard label="Overdue Tasks"      value={kp?.overdueTasks ?? 0}      icon={AlertTriangle} accent="text-red-600"    loading={exec.isLoading} danger />
       </div>
 
-      {/* Task Tracker — My Open / Due Today / Overdue */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <KpiCard label="My Open Tasks"   value={tasksOpen.data ?? 0}     icon={ListTodo}      accent="text-slate-700" loading={tasksOpen.isLoading} />
-        <KpiCard label="Tasks Due Today" value={tasksDueToday.data ?? 0} icon={CalendarClock} accent="text-blue-600"   loading={tasksDueToday.isLoading} />
-        <KpiCard label="Overdue Tasks"   value={tasksOverdue.data ?? 0}  icon={AlertTriangle} accent="text-red-600"    loading={tasksOverdue.isLoading} />
+      {/* Tamil Nadu Litigation Heat Map + District drill-down */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <TNLitigationHeatMap
+            districts={a?.districts ?? []}
+            selected={selectedDistrict}
+            onSelect={(d) => setSelectedDistrict(d === selectedDistrict ? null : d)}
+            loading={exec.isLoading}
+          />
+        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <MapPin className="h-4 w-4 text-blue-600" /> District Drill-Down
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {selectedDistrict ? selectedDistrict : 'Select a district on the heat map'}
+            </p>
+          </CardHeader>
+          <CardContent>
+            {!drill ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No district selected.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <DrillMetric label="Total Cases"       value={drill.total}            color="text-slate-700" />
+                <DrillMetric label="Pending"           value={drill.pending}          color="text-amber-600" />
+                <DrillMetric label="Disposed"          value={drill.disposed}         color="text-emerald-600" />
+                <DrillMetric label="Upcoming Hearings" value={drill.upcomingHearings} color="text-indigo-600" />
+                <DrillMetric label="Advocates"         value={drill.advocates}        color="text-blue-600" />
+                <DrillMetric label="Open Tasks"        value={drill.openTasks}        color="text-slate-700" />
+                <DrillMetric label="Overdue Tasks"     value={drill.overdueTasks}     color="text-red-600" />
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
+      {/* Section → Advocate mapping */}
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Open Tasks</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><Layers className="h-4 w-4" /> Section → Advocate Mapping</CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
-          {openTaskList.isLoading ? (
-            <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-9" />)}</div>
-          ) : (openTaskList.data ?? []).length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No open tasks.</p>
+          {exec.isLoading ? (
+            <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+          ) : (a?.sectionAdvocates ?? []).length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No section-advocate data.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="max-h-[360px] overflow-auto">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 bg-background">
                   <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Task</th>
-                    <th className="px-3 py-2 font-medium">Assignee</th>
-                    <th className="px-3 py-2 font-medium">Due Date</th>
-                    <th className="px-3 py-2 font-medium">Priority</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium">Section</th>
+                    <th className="px-3 py-2 font-medium">Advocate</th>
+                    <th className="px-3 py-2 text-right font-medium">Assigned</th>
+                    <th className="px-3 py-2 text-right font-medium">Open</th>
+                    <th className="px-3 py-2 text-right font-medium">Completed</th>
+                    <th className="px-3 py-2 text-right font-medium">Overdue</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(openTaskList.data ?? []).map(t => (
-                    <tr key={t.id} className="border-b last:border-0">
-                      <td className="px-3 py-2">{t.task_title}</td>
-                      <td className="px-3 py-2">{t.assigned_to_name ?? '\u2014'}</td>
-                      <td className="whitespace-nowrap px-3 py-2">{fmtDate(t.due_date)}</td>
-                      <td className="px-3 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${taskPriorityClasses(t.priority)}`}>{t.priority}</span></td>
-                      <td className="px-3 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${taskStatusClasses(t.task_status)}`}>{t.task_status}</span></td>
+                  {(a?.sectionAdvocates ?? []).map((r, i) => (
+                    <tr key={`${r.section}-${r.advocate}-${i}`} className="border-b last:border-0">
+                      <td className="px-3 py-2">{r.section}</td>
+                      <td className="px-3 py-2">{r.advocate}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.assignedCases}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.openTasks}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{r.completedTasks}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${r.overdueTasks > 0 ? 'font-semibold text-red-600' : ''}`}>{r.overdueTasks}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -363,46 +399,269 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Most Connected Cases — top 10 by connection count */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base"><Link2 className="h-4 w-4" /> Most Connected Cases</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {mostConnected.isLoading ? (
-            <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
-          ) : (mostConnected.data ?? []).length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No connected cases yet.</p>
-          ) : (
-            <ul className="divide-y">
-              {(mostConnected.data ?? []).map((c, i) => (
-                <li key={`${c.label}-${i}`} className="flex items-center justify-between px-4 py-2 text-sm">
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
-                    <span className="truncate font-mono text-xs">{c.label}</span>
-                  </span>
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                    <Link2 className="h-3 w-3" />{c.value}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {/* Advocate Performance + Leaderboard */}
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4" /> Advocate Performance</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {exec.isLoading ? (
+                <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+              ) : (a?.advocates ?? []).length === 0 ? (
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">No advocate data.</p>
+              ) : (
+                <div className="max-h-[420px] overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-background">
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="px-3 py-2 font-medium">Advocate</th>
+                        <th className="px-3 py-2 text-right font-medium">Cases</th>
+                        <th className="px-3 py-2 text-right font-medium">Open</th>
+                        <th className="px-3 py-2 text-right font-medium">Done</th>
+                        <th className="px-3 py-2 text-right font-medium">Overdue</th>
+                        <th className="px-3 py-2 text-right font-medium">Hearings</th>
+                        <th className="px-3 py-2 font-medium" style={{ minWidth: 130 }}>Completion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(a?.advocates ?? []).map((r, i) => (
+                        <tr key={`${r.advocate}-${i}`} className="border-b last:border-0">
+                          <td className="px-3 py-2">{r.advocate}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{r.assignedCases}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{r.openTasks}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{r.completedTasks}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${r.overdueTasks > 0 ? 'font-semibold text-red-600' : ''}`}>{r.overdueTasks}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{r.hearingsThisMonth}</td>
+                          <td className="px-3 py-2"><ProgressBar pct={r.completionPct} color={pctColor(r.completionPct)} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* Row 2 — Cases by court + status donut */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><Trophy className="h-4 w-4 text-amber-500" /> Advocate Leaderboard</CardTitle>
+            <p className="text-xs text-muted-foreground">Ranked by task completion %, closed cases &amp; on-time delivery</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {exec.isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+            ) : (a?.leaderboard ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">No data.</p>
+            ) : (
+              <ul className="divide-y">
+                {(a?.leaderboard ?? []).map((r, i) => (
+                  <li key={`${r.advocate}-${i}`} className="flex items-center gap-3 px-4 py-2 text-sm">
+                    <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${i === 0 ? 'bg-amber-100 text-amber-700' : i === 1 ? 'bg-slate-200 text-slate-700' : i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-muted text-muted-foreground'}`}>{i + 1}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{r.advocate}</p>
+                      <p className="text-[11px] text-muted-foreground">{r.closedCases} closed · {r.completedTasks}/{r.totalTasks} tasks</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{r.completionPct}%</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Upcoming Hearings Requiring Action + Overdue Task Tracker */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><CalendarClock className="h-4 w-4 text-indigo-600" /> Upcoming Hearings Requiring Action</CardTitle>
+            <p className="text-xs text-muted-foreground">Next 30 days</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {exec.isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+            ) : (a?.upcomingHearings ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">No upcoming hearings.</p>
+            ) : (
+              <div className="max-h-[400px] overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-background">
+                    <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">Case Number</th>
+                      <th className="px-3 py-2 font-medium">Advocate</th>
+                      <th className="px-3 py-2 font-medium">Hearing Date</th>
+                      <th className="px-3 py-2 text-right font-medium">Open Tasks</th>
+                      <th className="px-3 py-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(a?.upcomingHearings ?? []).map(r => (
+                      <tr key={r.caseId} className="border-b last:border-0">
+                        <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{r.caseNumber ?? '\u2014'}</td>
+                        <td className="px-3 py-2">{r.advocate ?? '\u2014'}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{fmtDate(r.hearingDate)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{r.openTasks}</td>
+                        <td className="px-3 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusPill(r.status)}`}>{r.status ?? '\u2014'}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-red-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base text-red-600"><AlertTriangle className="h-4 w-4" /> Overdue Task Tracker</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {exec.isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+            ) : (a?.overdueTasks ?? []).length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">No overdue tasks. 🎯</p>
+            ) : (
+              <div className="max-h-[400px] overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-background">
+                    <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">Case Number</th>
+                      <th className="px-3 py-2 font-medium">Task</th>
+                      <th className="px-3 py-2 font-medium">Advocate</th>
+                      <th className="px-3 py-2 font-medium">Due Date</th>
+                      <th className="px-3 py-2 text-right font-medium">Days Overdue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(a?.overdueTasks ?? []).map(r => (
+                      <tr key={r.id} className="border-b bg-red-50/40 last:border-0">
+                        <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{r.caseNumber ?? '\u2014'}</td>
+                        <td className="max-w-[180px] truncate px-3 py-2" title={r.task}>{r.task}</td>
+                        <td className="px-3 py-2">{r.advocate ?? '\u2014'}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{fmtDate(r.dueDate)}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums text-red-600">{r.daysOverdue}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Connected Cases Analytics + Daily Cause List Analytics */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><Link2 className="h-4 w-4" /> Connected Cases Analytics</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-3 rounded-md bg-indigo-50 px-4 py-3">
+              <p className="text-xs text-muted-foreground">Total Connected Cases</p>
+              <p className="text-2xl font-bold text-indigo-700">{exec.isLoading ? '…' : (a?.connectedTotal ?? 0)}</p>
+            </div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Most Connected Cases</p>
+            {mostConnected.isLoading ? (
+              <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-7" />)}</div>
+            ) : (mostConnected.data ?? []).length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No connected cases yet.</p>
+            ) : (
+              <ul className="divide-y">
+                {(mostConnected.data ?? []).map((c, i) => (
+                  <li key={`${c.label}-${i}`} className="flex items-center justify-between py-1.5 text-sm">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
+                      <span className="truncate font-mono text-xs">{c.label}</span>
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                      <Link2 className="h-3 w-3" />{c.value}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><Gavel className="h-4 w-4" /> Daily Cause List Analytics</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-3 grid grid-cols-2 gap-3">
+              <div className="rounded-md bg-blue-50 px-4 py-3">
+                <p className="text-xs text-muted-foreground">Listed Today</p>
+                <p className="text-2xl font-bold text-blue-700">{exec.isLoading ? '…' : (a?.causeList.listedToday ?? 0)}</p>
+              </div>
+              <div className="rounded-md bg-slate-50 px-4 py-3">
+                <p className="text-xs text-muted-foreground">Listed This Week</p>
+                <p className="text-2xl font-bold text-slate-700">{exec.isLoading ? '…' : (a?.causeList.listedThisWeek ?? 0)}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">Court Hall Distribution</p>
+                {(a?.causeList.courtHalls ?? []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No data.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {(a?.causeList.courtHalls ?? []).map((c, i) => (
+                      <li key={i} className="flex justify-between text-xs"><span className="truncate" title={c.label}>{c.label}</span><span className="font-semibold tabular-nums">{c.value}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">Judge Wise Listings</p>
+                {(a?.causeList.judges ?? []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No data.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {(a?.causeList.judges ?? []).map((c, i) => (
+                      <li key={i} className="flex justify-between text-xs"><span className="truncate" title={c.label}>{c.label}</span><span className="font-semibold tabular-nums">{c.value}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Litigation Trend Analysis (last 12 months) */}
+      <ChartCard title="Litigation Trend Analysis (Last 12 Months)" loading={exec.isLoading} empty={(a?.trend ?? []).length === 0} height={340}>
+        <ResponsiveContainer>
+          <LineChart data={a?.trend ?? []} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Legend verticalAlign="top" height={28} iconType="circle" />
+            <Line type="monotone" dataKey="newCases" name="New Cases" stroke="#2563eb" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="casesDisposed" name="Disposed" stroke="#16a34a" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="hearings" name="Hearings" stroke="#d97706" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="tasksCreated" name="Tasks Created" stroke="#7c3aed" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="tasksCompleted" name="Tasks Completed" stroke="#0891b2" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      {/* Section-wise litigation + Status donut */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <ChartCard title="Cases by Court" loading={byCourt.isLoading} empty={courtData.length === 0}>
+          <ChartCard title="Section Wise Litigation" loading={exec.isLoading} empty={sectionData.length === 0}>
             <ResponsiveContainer>
-              <BarChart data={courtData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+              <BarChart data={sectionData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={70} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                  {courtData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  {sectionData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -424,33 +683,7 @@ export default function DashboardPage() {
         </ChartCard>
       </div>
 
-      {/* Row 3 — District + Section horizontal bars */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Cases by District (Top 10)" loading={byDistrict.isLoading} empty={districtData.length === 0}>
-          <ResponsiveContainer>
-            <BarChart data={districtData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Bar dataKey="value" radius={[0, 4, 4, 0]} fill="#2563eb" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-        <ChartCard title="Cases by Section (Top 10)" loading={bySection.isLoading} empty={sectionData.length === 0}>
-          <ResponsiveContainer>
-            <BarChart data={sectionData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Bar dataKey="value" radius={[0, 4, 4, 0]} fill="#7c3aed" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      </div>
-
-      {/* Row 4 — Disposal outcomes + hearing trend */}
+      {/* Disposal outcomes + hearing trend */}
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="Disposal Outcomes" loading={disposal.isLoading} empty={disposalData.length === 0}>
           <ResponsiveContainer>
