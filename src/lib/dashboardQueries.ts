@@ -381,6 +381,9 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
       advocates: districtAdvocates.get(key)?.size ?? 0,
       openTasks: districtOpenTasks.get(key) ?? 0,
       overdueTasks: districtOverdueTasks.get(key) ?? 0,
+      readyForHearing: districtReady.get(key) ?? 0,
+      counterPending: districtCounter.get(key) ?? 0,
+      documentsAwaited: districtDocs.get(key) ?? 0,
     };
   });
   const districts = Array.from(districtMap.values()).sort((a, b) => b.total - a.total);
@@ -393,12 +396,23 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   }
   const sections = topN(sectionMap, 12);
 
+  // ── Advocate status distribution ──
+  const advStatusMap = new Map<string, number>();
+  for (const c of cases) {
+    const key = (c.advocate_status ?? '').trim();
+    if (!key) continue;
+    advStatusMap.set(key, (advStatusMap.get(key) ?? 0) + 1);
+  }
+  const advocateStatusDistribution = Array.from(advStatusMap.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
   // ── Advocate performance ──
-  interface AdvAgg { assignedCases: number; open: number; completed: number; overdue: number; total: number; hearings: number; closed: number; }
+  interface AdvAgg { assignedCases: number; open: number; completed: number; overdue: number; total: number; hearings: number; closed: number; ready: number; docs: number; counter: number; compliance: number; }
   const advMap = new Map<string, AdvAgg>();
   const adv = (name: string): AdvAgg => {
     let a = advMap.get(name);
-    if (!a) { a = { assignedCases: 0, open: 0, completed: 0, overdue: 0, total: 0, hearings: 0, closed: 0 }; advMap.set(name, a); }
+    if (!a) { a = { assignedCases: 0, open: 0, completed: 0, overdue: 0, total: 0, hearings: 0, closed: 0, ready: 0, docs: 0, counter: 0, compliance: 0 }; advMap.set(name, a); }
     return a;
   };
   for (const c of cases) {
@@ -407,6 +421,10 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     a.assignedCases += 1;
     if (isDisposed(c.case_status)) a.closed += 1;
     if (c.next_hearing_date && String(c.next_hearing_date).slice(0, 7) === thisMonth) a.hearings += 1;
+    if (isReadyForHearing(c)) a.ready += 1;
+    if (isDocumentsAwaited(c)) a.docs += 1;
+    if (isCounterPending(c)) a.counter += 1;
+    if (isCompliancePending(c)) a.compliance += 1;
   }
   for (const t of tasks) {
     const name = t.assigned_to_name || caseById.get(t.case_id)?.assigned_advocate_name;
@@ -428,6 +446,10 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
       hearingsThisMonth: a.hearings,
       closedCases: a.closed,
       completionPct: a.total > 0 ? Math.round((a.completed / a.total) * 100) : 0,
+      readyForHearing: a.ready,
+      documentsAwaited: a.docs,
+      counterPending: a.counter,
+      compliancePending: a.compliance,
     }))
     .sort((x, y) => y.assignedCases - x.assignedCases);
 
