@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Briefcase, List,
-  CalendarDays, Settings, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu, Info,
+  CalendarDays, Settings, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu, Info, Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { to: '/cases',           label: 'Cases',             icon: Briefcase },
   { to: '/todays-listings', label: "Today's Listings", icon: List },
   { to: '/upcoming-hearings', label: 'Upcoming Hearings', icon: CalendarDays },
+  { to: '/bulk-upload',     label: 'Administration',     icon: Upload },
   { to: '/settings',        label: 'Settings',          icon: Settings },
   { to: '/about',           label: 'About',             icon: Info },
 ];
@@ -29,6 +30,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/cases':           'Case Management',
   '/todays-listings': "Today's Listings",
   '/upcoming-hearings': 'Upcoming Hearings',
+  '/bulk-upload':      'Administration',
   '/settings':        'Settings',
   '/organizations':   'Organization Management',
   '/about':           'About',

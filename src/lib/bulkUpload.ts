@@ -460,7 +460,13 @@ async function loadExistingAdvocatesForOrg(orgId: string) {
     .or(`organization_id.eq.${orgId},organization_id.is.null`)
     .range(0, 49999);
 
-  let { data, error } = await q;
+  let data: Array<Record<string, unknown>> | null = null;
+  let error: { message?: string } | null = null;
+  {
+    const res = await q;
+    data = (res.data ?? null) as Array<Record<string, unknown>> | null;
+    error = res.error as { message?: string } | null;
+  }
 
   // Backward compatibility where organization_id may not exist yet.
   if (error?.message?.toLowerCase().includes('organization_id')) {
@@ -468,8 +474,8 @@ async function loadExistingAdvocatesForOrg(orgId: string) {
       .from('advocates')
       .select('id, advocate_name, email, mobile')
       .range(0, 49999);
-    data = fallback.data;
-    error = fallback.error;
+    data = (fallback.data ?? null) as Array<Record<string, unknown>> | null;
+    error = fallback.error as { message?: string } | null;
   }
 
   if (error) throw new Error(error.message);
