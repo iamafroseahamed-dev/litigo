@@ -31,7 +31,9 @@ interface Recipient {
   created_at: string;
 }
 
-const EMPTY: Omit<Recipient, 'id' | 'created_at'> = {
+type RecipientForm = Omit<Recipient, 'id' | 'created_at' | 'organization_id'>;
+
+const EMPTY: RecipientForm = {
   name: '', email: null, mobile_number: null, whatsapp_number: null,
   notify_email: true, notify_sms: false, notify_whatsapp: false, active: true,
 };
