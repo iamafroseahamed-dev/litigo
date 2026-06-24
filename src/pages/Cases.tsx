@@ -272,6 +272,7 @@ export default function CasesPage() {
   // ── eCourts Case Details modal state ─────────────────────────────────────────
   const [caseDetailsOpen, setCaseDetailsOpen]   = useState(false);
   const [caseDetailsNumber, setCaseDetailsNumber] = useState<string | null>(null);
+  const [caseDetailsId, setCaseDetailsId]       = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -611,7 +612,7 @@ export default function CasesPage() {
                         </Button>
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" title="Case Details"
                           disabled={!c.case_number}
-                          onClick={() => { setCaseDetailsNumber(c.case_number); setCaseDetailsOpen(true); }}>
+                          onClick={() => { setCaseDetailsNumber(c.case_number); setCaseDetailsId(c.id); setCaseDetailsOpen(true); }}>
                           <Scale className="w-3.5 h-3.5" />
                         </Button>
                       </div>
@@ -837,6 +838,7 @@ export default function CasesPage() {
       {/* ── eCourts Case Details Modal ── */}
       <CaseDetailsModal
         caseNumber={caseDetailsNumber}
+        caseId={caseDetailsId}
         open={caseDetailsOpen}
         onOpenChange={setCaseDetailsOpen}
       />

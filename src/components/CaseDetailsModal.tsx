@@ -3,9 +3,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { getEcourtsCaseType } from '@/config/ecourtsCaseTypes';
+import { supabase } from '@/lib/supabase';
 
 // ── eCourts response shape ──────────────────────────────────────────────────────
 
@@ -44,7 +46,157 @@ interface SearchResponse {
   totalHits?: number;
   caseData?: EcourtsCaseData | null;
   usedFallback?: boolean;
+  rateLimited?: boolean;
+  requestId?: string | null;
   message?: string;
+}
+
+// ── Caching infrastructure ───────────────────────────────────────────────
+
+export type CacheSource = 'Memory Cache' | 'Local Storage' | 'Supabase Cache' | 'eCourts API';
+
+const MEMORY_TTL   = 15 * 60 * 1000;        // Layer 1 — 15 minutes
+const LOCAL_TTL    = 24 * 60 * 60 * 1000;   // Layer 2 — 24 hours
+const SUPABASE_TTL = 24 * 60 * 60 * 1000;   // Layer 3 — 24 hours
+
+interface CacheEntry {
+  data: EcourtsCaseData;
+  fetchedAt: number;
+  requestId?: string | null;
+}
+
+// Layer 1 — in-memory cache (module scope, shared across modal instances)
+const caseDetailsCache = new Map<string, CacheEntry>();
+
+function readMemory(caseNumber: string): CacheEntry | null {
+  const cached = caseDetailsCache.get(caseNumber);
+  if (cached && Date.now() - cached.fetchedAt < MEMORY_TTL) return cached;
+  return null;
+}
+
+// Layer 2 — browser localStorage
+function localKey(caseNumber: string) {
+  return `case_${caseNumber}`;
+}
+
+function readLocal(caseNumber: string): CacheEntry | null {
+  try {
+    const raw = localStorage.getItem(localKey(caseNumber));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CacheEntry;
+    if (parsed?.data && typeof parsed.fetchedAt === 'number'
+        && Date.now() - parsed.fetchedAt < LOCAL_TTL) {
+      return parsed;
+    }
+  } catch {
+    /* ignore quota / parse / private-mode errors */
+  }
+  return null;
+}
+
+function writeLocal(caseNumber: string, entry: CacheEntry) {
+  try {
+    localStorage.setItem(localKey(caseNumber), JSON.stringify(entry));
+  } catch {
+    /* ignore quota / private-mode errors */
+  }
+}
+
+// Layer 3 — Supabase cases table
+async function readSupabase(caseId: string): Promise<CacheEntry | null> {
+  try {
+    const { data, error } = await supabase
+      .from('cases')
+      .select('case_details_json, case_details_synced_at, ecourts_request_id')
+      .eq('id', caseId)
+      .maybeSingle();
+    if (error || !data?.case_details_json || !data.case_details_synced_at) return null;
+    const syncedAt = new Date(data.case_details_synced_at as string).getTime();
+    if (Number.isNaN(syncedAt) || Date.now() - syncedAt >= SUPABASE_TTL) return null;
+    return {
+      data: data.case_details_json as EcourtsCaseData,
+      fetchedAt: syncedAt,
+      requestId: (data.ecourts_request_id as string | null) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeSupabase(caseId: string, entry: CacheEntry) {
+  try {
+    await supabase
+      .from('cases')
+      .update({
+        case_details_json: entry.data,
+        case_details_synced_at: new Date(entry.fetchedAt).toISOString(),
+        ecourts_request_id: entry.requestId ?? null,
+      })
+      .eq('id', caseId);
+  } catch {
+    /* best-effort cache write */
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+// Layer 4 — eCourts API (via serverless proxy) with exponential backoff on 429
+async function fetchFromApi(caseNumber: string): Promise<CacheEntry | null> {
+  // WP/4232/2024 → caseType="WP", caseNo="4232", caseYear="2024"
+  const [caseType = '', caseNo = '', caseYear = ''] = String(caseNumber ?? '').split('/');
+  const ecourtsCaseType = getEcourtsCaseType(caseType);
+
+  if (import.meta.env.DEV) {
+    console.log({ caseType, ecourtsCaseType, caseNo, caseYear });
+  }
+
+  if (!caseNo || !caseYear) return null;
+
+  const MAX_RETRIES = 5;
+  let attempt = 0;
+
+  while (true) {
+    const response = await fetch('/api/case-details/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseNo, caseYear, caseTypes: ecourtsCaseType }),
+    });
+
+    // Rate limited → exponential backoff: 1s, 2s, 4s, 8s, 16s
+    if (response.status === 429) {
+      attempt += 1;
+      if (attempt > MAX_RETRIES) {
+        throw new Error('Unable to retrieve case details. Please try again later.');
+      }
+      await sleep(2 ** (attempt - 1) * 1000);
+      continue;
+    }
+
+    const result: SearchResponse = await response.json();
+
+    if (!result.success) {
+      if (result.rateLimited) {
+        attempt += 1;
+        if (attempt > MAX_RETRIES) {
+          throw new Error('Unable to retrieve case details. Please try again later.');
+        }
+        await sleep(2 ** (attempt - 1) * 1000);
+        continue;
+      }
+      throw new Error(result.message || 'Failed to fetch case details.');
+    }
+
+    if (!result.totalHits || !result.caseData) return null;
+
+    if (import.meta.env.DEV) {
+      console.log('Case Details');
+      console.log(result.caseData);
+    }
+
+    return { data: result.caseData, fetchedAt: Date.now(), requestId: result.requestId ?? null };
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -109,82 +261,100 @@ function StatCard({ label, value }: { label: string; value: number }) {
 
 interface CaseDetailsModalProps {
   caseNumber: string | null;
+  caseId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function CaseDetailsModal({ caseNumber, open, onOpenChange }: CaseDetailsModalProps) {
-  const [loading, setLoading] = useState(false);
+export function CaseDetailsModal({ caseNumber, caseId, open, onOpenChange }: CaseDetailsModalProps) {
+  const [loadingApi, setLoadingApi] = useState(false);
+  const [loadingCached, setLoadingCached] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [caseData, setCaseData] = useState<EcourtsCaseData | null>(null);
+  const [source, setSource] = useState<CacheSource | null>(null);
 
-  const fetchDetails = useCallback(async (rawCaseNumber: string) => {
-    setLoading(true);
+  const load = useCallback(async (rawCaseNumber: string, id: string | null | undefined, forceRefresh: boolean) => {
+    const key = String(rawCaseNumber ?? '').trim();
     setError(null);
     setCaseData(null);
+    setSource(null);
 
-    // WP/4232/2024 → caseType="WP", caseNo="4232", caseYear="2024"
-    const [caseType = '', caseNo = '', caseYear = ''] = String(rawCaseNumber ?? '').split('/');
-    const ecourtsCaseType = getEcourtsCaseType(caseType);
-
-    if (import.meta.env.DEV) {
-      console.log({ caseType, ecourtsCaseType, caseNo, caseYear });
-    }
-
-    if (!caseNo || !caseYear) {
+    if (!key) {
       setError('Case details not found.');
-      setLoading(false);
       return;
     }
 
-    try {
-      const response = await fetch('/api/case-details/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseNo, caseYear, caseTypes: ecourtsCaseType }),
-      });
-
-      const result: SearchResponse = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.message || 'Failed to fetch case details.');
+    // ── Cache layers (skipped on a forced refresh) ──
+    if (!forceRefresh) {
+      // Layer 1 — memory
+      const mem = readMemory(key);
+      if (mem) {
+        setCaseData(mem.data);
+        setSource('Memory Cache');
+        return;
       }
+      // Layer 2 — localStorage
+      const local = readLocal(key);
+      if (local) {
+        caseDetailsCache.set(key, local); // hydrate memory
+        setCaseData(local.data);
+        setSource('Local Storage');
+        return;
+      }
+      // Layer 3 — Supabase
+      if (id) {
+        setLoadingCached(true);
+        const sb = await readSupabase(id);
+        setLoadingCached(false);
+        if (sb) {
+          caseDetailsCache.set(key, sb);
+          writeLocal(key, sb);
+          setCaseData(sb.data);
+          setSource('Supabase Cache');
+          return;
+        }
+      }
+    }
 
-      if (!result.totalHits || !result.caseData) {
+    // ── Layer 4 — eCourts API ──
+    setLoadingApi(true);
+    try {
+      const entry = await fetchFromApi(key);
+      if (!entry) {
         setError('Case details not found.');
         return;
       }
-
-      if (import.meta.env.DEV) {
-        console.log('Case Details');
-        console.log(result.caseData);
-      }
-
-      setCaseData(result.caseData);
+      caseDetailsCache.set(key, entry);
+      writeLocal(key, entry);
+      if (id) writeSupabase(id, entry);
+      setCaseData(entry.data);
+      setSource('eCourts API');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch case details.');
+      setError(err instanceof Error ? err.message : 'Unable to retrieve case details. Please try again later.');
     } finally {
-      setLoading(false);
+      setLoadingApi(false);
     }
   }, []);
 
   useEffect(() => {
     if (open && caseNumber) {
-      fetchDetails(caseNumber);
+      load(caseNumber, caseId, false);
     }
-  }, [open, caseNumber, fetchDetails]);
+  }, [open, caseNumber, caseId, load]);
+
+  const refreshing = (loadingApi || loadingCached) && source === null;
 
   return (
     <Dialog
       open={open}
       onOpenChange={o => {
         onOpenChange(o);
-        if (!o) { setCaseData(null); setError(null); }
+        if (!o) { setCaseData(null); setError(null); setSource(null); }
       }}
     >
       <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[1200px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2">
+          <DialogTitle className="flex flex-wrap items-center gap-2 pr-8">
             <span className="font-mono">{val(caseData?.registrationNumber) === '\u2014' ? caseNumber : caseData?.registrationNumber}</span>
             {caseData?.caseStatus && (
               <Badge variant={String(caseData.caseStatus).toLowerCase() === 'pending' ? 'warning' : 'secondary'}>
@@ -194,23 +364,36 @@ export function CaseDetailsModal({ caseNumber, open, onOpenChange }: CaseDetails
             {caseData?.courtName && (
               <span className="text-sm font-normal text-muted-foreground">{caseData.courtName}</span>
             )}
+            {import.meta.env.DEV && source && (
+              <Badge variant="info" className="text-[10px]">Source: {source}</Badge>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto h-7 gap-1 text-xs"
+              disabled={loadingApi || loadingCached || !caseNumber}
+              onClick={() => caseNumber && load(caseNumber, caseId, true)}
+            >
+              <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh Case Details
+            </Button>
           </DialogTitle>
         </DialogHeader>
 
-        {loading && (
+        {(loadingApi || loadingCached) && (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading case details...
+            {loadingCached ? 'Loading cached case details...' : 'Loading case details...'}
           </div>
         )}
 
-        {!loading && error && (
+        {!loadingApi && !loadingCached && error && (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
         )}
 
-        {!loading && !error && caseData && (
+        {!loadingApi && !loadingCached && !error && caseData && (
           <div className="space-y-6">
             {/* Basic Information */}
             <section>

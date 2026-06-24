@@ -10,3 +10,4 @@ ADD COLUMN IF NOT EXISTS case_details_synced_at timestamptz;
 
 ALTER TABLE cases
 ADD COLUMN IF NOT EXISTS ecourts_request_id text;
+promp

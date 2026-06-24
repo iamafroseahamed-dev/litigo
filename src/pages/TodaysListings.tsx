@@ -101,6 +101,7 @@ export default function TodaysListingsPage() {
   // ── eCourts Case Details modal state ─────────────────────────────────────────
   const [caseDetailsOpen, setCaseDetailsOpen]     = useState(false);
   const [caseDetailsNumber, setCaseDetailsNumber] = useState<string | null>(null);
+  const [caseDetailsId, setCaseDetailsId]         = useState<string | null>(null);
 
   // ── Filters ──────────────────────────────────────────────────────────────────
   const todayUtc = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -491,7 +492,7 @@ export default function TodaysListingsPage() {
                               size="sm"
                               className="h-7 gap-1 text-xs"
                               disabled={!record.case_number}
-                              onClick={() => { setCaseDetailsNumber(record.case_number); setCaseDetailsOpen(true); }}
+                              onClick={() => { setCaseDetailsNumber(record.case_number); setCaseDetailsId(record.case_id); setCaseDetailsOpen(true); }}
                             >
                               <Scale className="h-3 w-3" />
                               Case Details
@@ -664,6 +665,7 @@ export default function TodaysListingsPage() {
       {/* ── eCourts Case Details Modal ── */}
       <CaseDetailsModal
         caseNumber={caseDetailsNumber}
+        caseId={caseDetailsId}
         open={caseDetailsOpen}
         onOpenChange={setCaseDetailsOpen}
       />
