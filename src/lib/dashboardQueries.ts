@@ -304,6 +304,8 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
 
   const now = new Date();
   const today = localIso(now);
+  const in3 = localIso(addDays(now, 3));
+  const in7 = localIso(addDays(now, 7));
   const in30 = localIso(addDays(now, 30));
   const weekAgo = localIso(addDays(now, -7));
   const thisMonth = today.slice(0, 7);
@@ -321,12 +323,21 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   const isReadyForHearing = (c: CaseRow) => advEq(c, 'Ready For Hearing');
   const isCounterPending = (c: CaseRow) => advEq(c, 'Counter Affidavit Pending');
   const isDocumentsAwaited = (c: CaseRow) => advEq(c, 'Documents Awaited');
+  const isLegalOpinionPending = (c: CaseRow) => advEq(c, 'Legal Opinion Pending');
   const isCompliancePending = (c: CaseRow) => advEq(c, 'Order Compliance Pending');
+
+  // Case-level classifications
+  const isActive = (s: string | null) => (s ?? '').toLowerCase() === 'active';
+  const isSensitive = (c: CaseRow) => (c.sensitivity ?? '').trim().toLowerCase() === 'sensitive';
+  const isClaParty = (c: CaseRow) => !!(c.cla_party_status ?? '').trim();
 
   const kpis: ExecKpis = {
     totalCases: cases.length,
     pendingCases: cases.filter(c => isPending(c.case_status)).length,
     disposedCases: cases.filter(c => isDisposed(c.case_status)).length,
+    activeCases: cases.filter(c => isActive(c.case_status)).length,
+    sensitiveCases: cases.filter(isSensitive).length,
+    claPartyCases: cases.filter(isClaParty).length,
     casesListedToday: listings.filter(l => String(l.listed_date ?? '').slice(0, 10) === today).length,
     upcomingHearings30: cases.filter(c => c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30).length,
     openTasks: tasks.filter(taskOpen).length,
@@ -334,6 +345,7 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     readyForHearing: cases.filter(isReadyForHearing).length,
     counterPending: cases.filter(isCounterPending).length,
     documentsAwaited: cases.filter(isDocumentsAwaited).length,
+    legalOpinionPending: cases.filter(isLegalOpinionPending).length,
     compliancePending: cases.filter(isCompliancePending).length,
   };
 
@@ -418,11 +430,11 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     .sort((a, b) => b.value - a.value);
 
   // ── Advocate performance (CASE-level only — never task assignee data) ──
-  interface AdvAgg { assignedCases: number; hearings: number; disposed: number; ready: number; docs: number; counter: number; }
+  interface AdvAgg { assignedCases: number; hearings: number; upcoming: number; disposed: number; ready: number; docs: number; counter: number; }
   const advMap = new Map<string, AdvAgg>();
   const adv = (name: string): AdvAgg => {
     let a = advMap.get(name);
-    if (!a) { a = { assignedCases: 0, hearings: 0, disposed: 0, ready: 0, docs: 0, counter: 0 }; advMap.set(name, a); }
+    if (!a) { a = { assignedCases: 0, hearings: 0, upcoming: 0, disposed: 0, ready: 0, docs: 0, counter: 0 }; advMap.set(name, a); }
     return a;
   };
   for (const c of cases) {
@@ -432,6 +444,7 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     a.assignedCases += 1;
     if (isDisposed(c.case_status)) a.disposed += 1;
     if (c.next_hearing_date && String(c.next_hearing_date).slice(0, 7) === thisMonth) a.hearings += 1;
+    if (c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30) a.upcoming += 1;
     if (isReadyForHearing(c)) a.ready += 1;
     if (isDocumentsAwaited(c)) a.docs += 1;
     if (isCounterPending(c)) a.counter += 1;
@@ -444,6 +457,7 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
       documentsAwaited: a.docs,
       counterPending: a.counter,
       hearingsThisMonth: a.hearings,
+      upcomingHearings: a.upcoming,
       disposedCases: a.disposed,
     }))
     .sort((x, y) => y.assignedCases - x.assignedCases);
@@ -501,14 +515,20 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     .filter(c => c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30)
     .sort((a, b) => String(a.next_hearing_date).localeCompare(String(b.next_hearing_date)))
     .slice(0, 50)
-    .map(c => ({
-      caseId: c.id,
-      caseNumber: c.case_number,
-      advocate: c.assigned_advocate_name,
-      hearingDate: c.next_hearing_date,
-      openTasks: openTasksByCase.get(c.id) ?? 0,
-      status: c.case_status,
-    }));
+    .map(c => {
+      const nh = String(c.next_hearing_date);
+      const priority: 'High' | 'Medium' | 'Low' = nh <= in3 ? 'High' : nh <= in7 ? 'Medium' : 'Low';
+      return {
+        caseId: c.id,
+        caseNumber: c.case_number,
+        advocate: c.assigned_advocate_name,
+        hearingDate: c.next_hearing_date,
+        openTasks: openTasksByCase.get(c.id) ?? 0,
+        status: c.case_status,
+        advocateStatus: c.advocate_status,
+        priority,
+      };
+    });
 
   // ── Overdue task tracker ──
   const overdueTasks: OverdueTaskRow[] = tasks
@@ -522,6 +542,7 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
         caseNumber: c?.case_number ?? null,
         task: t.task_title ?? '—',
         advocate: t.assigned_to_name || c?.assigned_advocate_name || null,
+        assignedTo: t.assigned_to_name || null,
         dueDate: t.due_date,
         daysOverdue: days,
       };
