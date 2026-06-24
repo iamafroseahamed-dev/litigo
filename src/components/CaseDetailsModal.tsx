@@ -682,7 +682,7 @@ export function CaseDetailsModal({
           </TabsContent>
 
           <TabsContent value="tasks">
-            <CaseTasksTab caseId={caseId} />
+            <CaseTasksTab caseId={caseId} caseNumber={caseNumber} />
           </TabsContent>
 
           <TabsContent value="history">

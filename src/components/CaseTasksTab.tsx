@@ -7,10 +7,10 @@ import {
 import { CheckCircle2, Edit2, Loader2, ListTodo, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { TaskFormDialog } from '@/components/TaskFormDialog';
-import { fmtDate, taskPriorityClasses, taskStatusClasses } from '@/lib/caseManagement';
+import { fmtDate, taskPriorityClasses, taskStatusClasses, emailStatusClasses } from '@/lib/caseManagement';
 import type { CaseTask } from '@/types';
 
-export function CaseTasksTab({ caseId }: { caseId: string | null | undefined }) {
+export function CaseTasksTab({ caseId, caseNumber }: { caseId: string | null | undefined; caseNumber?: string | null }) {
   const [tasks, setTasks] = useState<CaseTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -79,7 +79,7 @@ export function CaseTasksTab({ caseId }: { caseId: string | null | undefined }) 
         </div>
       ) : (
         <div className="overflow-x-auto rounded-md border">
-          <Table className="min-w-[820px]">
+          <Table className="min-w-[980px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Task</TableHead>
@@ -89,6 +89,7 @@ export function CaseTasksTab({ caseId }: { caseId: string | null | undefined }) 
                 <TableHead>Due Date</TableHead>
                 <TableHead>Priority</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Email Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -110,6 +111,9 @@ export function CaseTasksTab({ caseId }: { caseId: string | null | undefined }) 
                   </TableCell>
                   <TableCell>
                     <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${taskStatusClasses(t.task_status)}`}>{t.task_status}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${emailStatusClasses(t.email_notification_status)}`}>{t.email_notification_status ?? 'Pending'}</span>
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-0.5">
@@ -138,6 +142,7 @@ export function CaseTasksTab({ caseId }: { caseId: string | null | undefined }) 
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         caseId={caseId}
+        caseNumber={caseNumber}
         task={editing}
         onSaved={load}
       />

@@ -15,10 +15,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Search, Edit2, Eye, ExternalLink, FileText, Filter, Loader2, X, PowerOff, RefreshCw, Download, Scale, UserPlus } from 'lucide-react';
+import { Plus, Search, Edit2, Eye, ExternalLink, FileText, Filter, Loader2, X, PowerOff, RefreshCw, Download, Scale, UserPlus, ListPlus } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { CaseDetailsModal } from '@/components/CaseDetailsModal';
-import type { Case } from '@/types';
+import { TaskFormDialog } from '@/components/TaskFormDialog';
+import type { Case, Advocate } from '@/types';
 
 const COURTS = [
   'Supreme Court of India', 'High Court', 'District Court', 'Sessions Court',
@@ -47,8 +48,6 @@ interface Filters {
   case_status: string; follow_up_status: string; active: string;
 }
 const EMPTY_FILTERS: Filters = { district: '', section: '', cla_party_status: '', sensitivity: '', case_status: '', follow_up_status: '', active: '' };
-
-interface Advocate { id: string; name: string; email: string | null; mobile_number: string | null; }
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
@@ -282,6 +281,10 @@ export default function CasesPage() {
   const [assignAdvocateId, setAssignAdvocateId] = useState<string>('');
   const [assigning, setAssigning]           = useState(false);
 
+  // ── Task management ──────────────────────────────────────────────────────────
+  const [taskCase, setTaskCase]             = useState<Case | null>(null);
+  const [taskCounts, setTaskCounts]         = useState<Record<string, { open: number; overdue: number }>>({});
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -298,15 +301,35 @@ export default function CasesPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Advocate list for the assignment dropdown (CLA team = notification recipients)
+  // Advocate master for the assignment + task dropdowns
   useEffect(() => {
     supabase
-      .from('system_notification_recipients')
-      .select('id, name, email, mobile_number')
+      .from('advocates')
+      .select('id, advocate_name, email, mobile, designation, active, created_at')
       .eq('active', true)
-      .order('name', { ascending: true })
+      .order('advocate_name', { ascending: true })
       .then(({ data }) => setAdvocates((data ?? []) as Advocate[]));
   }, []);
+
+  // Per-case open / overdue task counts
+  const loadTaskCounts = useCallback(async () => {
+    const { data } = await supabase
+      .from('case_tasks')
+      .select('case_id, due_date')
+      .neq('task_status', 'Completed');
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const m: Record<string, { open: number; overdue: number }> = {};
+    (data ?? []).forEach(r => {
+      const id = r.case_id as string;
+      if (!m[id]) m[id] = { open: 0, overdue: 0 };
+      m[id].open += 1;
+      if (r.due_date && String(r.due_date) < today) m[id].overdue += 1;
+    });
+    setTaskCounts(m);
+  }, []);
+
+  useEffect(() => { loadTaskCounts(); }, [loadTaskCounts]);
 
   async function saveAssignment() {
     if (!assignTarget) return;
@@ -314,9 +337,9 @@ export default function CasesPage() {
     if (!adv) { toast.error('Select an advocate.'); return; }
     setAssigning(true);
     const { error: err } = await supabase.from('cases').update({
-      assigned_advocate_name: adv.name,
+      assigned_advocate_name: adv.advocate_name,
       assigned_advocate_email: adv.email,
-      assigned_advocate_mobile: adv.mobile_number,
+      assigned_advocate_mobile: adv.mobile,
       assigned_on: new Date().toISOString(),
     }).eq('id', assignTarget.id);
     setAssigning(false);
@@ -602,7 +625,7 @@ export default function CasesPage() {
           ) : filtered.length === 0 ? (
             <div className="py-20 text-center text-sm text-muted-foreground">No cases match your current filters.</div>
           ) : (
-            <Table className="min-w-[1100px]">
+            <Table className="min-w-[1320px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-36">Case No.</TableHead>
@@ -615,7 +638,9 @@ export default function CasesPage() {
                   <TableHead className="w-24">Case Status</TableHead>
                   <TableHead className="w-28">Next Hearing</TableHead>
                   <TableHead className="w-44">Assigned Advocate</TableHead>
-                  <TableHead className="w-28 text-right">Actions</TableHead>
+                  <TableHead className="w-24">Open Tasks</TableHead>
+                  <TableHead className="w-24">Overdue Tasks</TableHead>
+                  <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -640,6 +665,16 @@ export default function CasesPage() {
                       ) : (
                         <span className="text-muted-foreground">Unassigned</span>
                       )}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {taskCounts[c.id]?.open
+                        ? <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">{taskCounts[c.id].open} Open</span>
+                        : <span className="text-muted-foreground">0</span>}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {taskCounts[c.id]?.overdue
+                        ? <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">{taskCounts[c.id].overdue} Overdue</span>
+                        : <span className="text-muted-foreground">0</span>}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -668,6 +703,10 @@ export default function CasesPage() {
                         <Button size="icon" variant="ghost" className="h-8 w-8" title="Assign Advocate"
                           onClick={() => { setAssignTarget(c); setAssignAdvocateId(''); }}>
                           <UserPlus className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" title="Create Task"
+                          onClick={() => setTaskCase(c)}>
+                          <ListPlus className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -902,10 +941,10 @@ export default function CasesPage() {
               <SelectTrigger><SelectValue placeholder="Select advocate" /></SelectTrigger>
               <SelectContent>
                 {advocates.length === 0 ? (
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground">No advocates found. Add recipients in Settings.</div>
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">No advocates found. Add them to the advocate master.</div>
                 ) : advocates.map(a => (
                   <SelectItem key={a.id} value={a.id}>
-                    {a.name}{a.mobile_number ? ` · ${a.mobile_number}` : ''}
+                    {a.advocate_name}{a.mobile ? ` · ${a.mobile}` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -930,6 +969,18 @@ export default function CasesPage() {
         allowSync
         onSynced={load}
       />
+
+      {/* ── Create Task Dialog ── */}
+      {taskCase && (
+        <TaskFormDialog
+          open={!!taskCase}
+          onOpenChange={(o) => { if (!o) setTaskCase(null); }}
+          caseId={taskCase.id}
+          caseNumber={taskCase.case_number}
+          initialHearingDate={taskCase.next_hearing_date}
+          onSaved={loadTaskCounts}
+        />
+      )}
     </div>
   );
 }

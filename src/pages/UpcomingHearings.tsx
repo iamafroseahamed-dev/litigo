@@ -64,7 +64,8 @@ export default function UpcomingHearingsPage() {
   // Quick task creation (hearing within 7 days)
   const [taskOpen, setTaskOpen] = useState(false);
   const [taskCaseId, setTaskCaseId] = useState<string | null>(null);
-  const [taskDueDate, setTaskDueDate] = useState<string | null>(null);
+  const [taskCaseNumber, setTaskCaseNumber] = useState<string | null>(null);
+  const [taskHearingDate, setTaskHearingDate] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['upcoming-hearings', today],
@@ -89,7 +90,8 @@ export default function UpcomingHearingsPage() {
 
   function openTask(c: Case) {
     setTaskCaseId(c.id);
-    setTaskDueDate(c.next_hearing_date ? String(c.next_hearing_date).slice(0, 10) : null);
+    setTaskCaseNumber(c.case_number ?? null);
+    setTaskHearingDate(c.next_hearing_date ? String(c.next_hearing_date).slice(0, 10) : null);
     setTaskOpen(true);
   }
 
@@ -149,18 +151,16 @@ export default function UpcomingHearingsPage() {
                       <TableCell className="whitespace-nowrap">{c.case_status ?? '\u2014'}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {(() => { const d = daysUntil(c.next_hearing_date); return d !== null && d <= 7; })() && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 gap-1 text-xs"
-                              title="Create task for this hearing"
-                              onClick={() => openTask(c)}
-                            >
-                              <ListPlus className="h-3 w-3" />
-                              Create Task
-                            </Button>
-                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1 text-xs"
+                            title="Create task for this case"
+                            onClick={() => openTask(c)}
+                          >
+                            <ListPlus className="h-3 w-3" />
+                            Create Task
+                          </Button>
                           <Button
                             variant="outline"
                             size="sm"
@@ -196,7 +196,9 @@ export default function UpcomingHearingsPage() {
           open={taskOpen}
           onOpenChange={setTaskOpen}
           caseId={taskCaseId}
-          initialDueDate={taskDueDate}
+          caseNumber={taskCaseNumber}
+          initialDueDate={taskHearingDate}
+          initialHearingDate={taskHearingDate}
           templates={HEARING_TASK_TEMPLATES}
         />
       )}
