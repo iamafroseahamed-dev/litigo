@@ -11,7 +11,6 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
-import { AppFooter } from '@/components/AppFooter';
 import { OrgCreditWidget } from '@/components/OrgCreditWidget';
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
@@ -200,10 +199,6 @@ export function Layout() {
       ([path]) => location.pathname === path || location.pathname.startsWith(path + '/'),
     )?.[1] ?? 'Adalat360';
 
-  // The About page shows the developer details inside its own card, so the global
-  // footer is hidden there to avoid duplicating the attribution.
-  const hideFooter = location.pathname === '/about';
-
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
       <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
@@ -211,7 +206,6 @@ export function Layout() {
         <Header title={title} onMenuClick={() => setMobileSidebarOpen(true)} />
         <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-50 p-3 sm:p-4 lg:p-6">
           <Outlet />
-          {!hideFooter && <AppFooter className="mt-6 border-t pt-4" />}
         </main>
       </div>
     </div>
