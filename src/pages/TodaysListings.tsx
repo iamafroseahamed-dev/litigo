@@ -11,11 +11,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Loader2, Scale, Video, X,
+  ChevronLeft, ChevronRight, FileText, Loader2, Scale, Video, X,
 } from 'lucide-react';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 import { CaseDetailsModal } from '@/components/CaseDetailsModal';
 import type { TodayMatchedListing } from '@/types';
 
@@ -79,18 +77,6 @@ function SummaryCard({ title, value }: { title: string; value: number | string }
   );
 }
 
-// ── MHC Order Details ──────────────────────────────────────────────────────────
-
-interface MhcOrderDetails {
-  caseNumber: string;
-  caseType: string;
-  pdfUrl: string | null;
-  judge: string;
-  judgmentDate: string;
-  petitioner: string;
-  respondent: string;
-}
-
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function TodaysListingsPage() {
@@ -101,12 +87,8 @@ export default function TodaysListingsPage() {
     Map<string, { count: number; firstListed: string; lastListed: string }>
   >(new Map());
 
-  // ── Order details modal ───────────────────────────────────────────────────────
-  const [orderModalOpen, setOrderModalOpen]       = useState(false);
-  const [selectedRecord, setSelectedRecord]       = useState<TodayMatchedListing | null>(null);
-  const [orderDetails, setOrderDetails]           = useState<MhcOrderDetails | null>(null);
-  const [orderLoading, setOrderLoading]           = useState(false);
-  const [orderError, setOrderError]               = useState<string | null>(null);
+  // ── Latest-order download state ───────────────────────────────────────────────
+  const [orderLoadingId, setOrderLoadingId]       = useState<string | null>(null);
 
   // ── eCourts Case Details modal state ─────────────────────────────────────────
   const [caseDetailsOpen, setCaseDetailsOpen]     = useState(false);
@@ -209,58 +191,37 @@ export default function TodaysListingsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Fetch MHC case status + order PDF (via server-side proxy) ───────────────
-  async function fetchCaseDetails(record: TodayMatchedListing) {
+  // ── Fetch the latest MHC order and open its PDF directly ────────────────────
+  async function viewLatestOrder(record: TodayMatchedListing) {
     const caseNumber = record.case_number;
     if (!caseNumber) return;
 
-    setSelectedRecord(record);
-    setOrderModalOpen(true);
-    setOrderLoading(true);
-    setOrderError(null);
-    setOrderDetails(null);
-
+    setOrderLoadingId(record.id);
     try {
       const response = await fetch('/api/mhc/case-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ case_number: caseNumber }),
       });
-
       const result = await response.json();
-
-      console.log('MHC CASE STATUS RESPONSE');
-      console.log(result);
 
       if (!result.success) {
         throw new Error(result.message || 'MHC API returned an error.');
       }
 
       const orders: Record<string, string>[] = result.orders ?? [];
-      if (orders.length === 0) {
-        throw new Error('No order data returned for this case.');
+      const pdfUrl = (orders[0]?.pdf_url as string | null | undefined) || null;
+
+      if (!pdfUrl) {
+        toast.error('No order PDF available for this case yet.');
+        return;
       }
 
-      // Use the first (latest) order entry
-      const data = orders[0];
-      const pdfUrl = (data.pdf_url as string | null | undefined) || null;
-
-      console.log('PDF URL');
-      console.log(pdfUrl);
-
-      setOrderDetails({
-        caseNumber:   data.caseno     ?? caseNumber,
-        caseType:     data.casetype_t ?? '',
-        pdfUrl,
-        judge:        data.jud1    ?? '',
-        judgmentDate: data.juddate ?? '',
-        petitioner:   data.petname ?? '',
-        respondent:   data.resname ?? '',
-      });
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
-      setOrderError(err instanceof Error ? err.message : 'Failed to fetch case details.');
+      toast.error(err instanceof Error ? err.message : 'Failed to fetch the latest order.');
     } finally {
-      setOrderLoading(false);
+      setOrderLoadingId(null);
     }
   }
 
@@ -513,11 +474,13 @@ export default function TodaysListingsPage() {
                               variant="outline"
                               size="sm"
                               className="h-7 gap-1 text-xs"
-                              disabled={!record.case_number}
-                              onClick={() => fetchCaseDetails(record)}
+                              disabled={!record.case_number || orderLoadingId === record.id}
+                              onClick={() => viewLatestOrder(record)}
                             >
-                              <FileText className="h-3 w-3" />
-                              View Details
+                              {orderLoadingId === record.id
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : <FileText className="h-3 w-3" />}
+                              View Latest Order
                             </Button>
                             <Button
                               variant="outline"
@@ -562,137 +525,6 @@ export default function TodaysListingsPage() {
           )}
         </>
       )}
-
-      {/* ── MHC Order Details Modal ── */}
-      <Dialog open={orderModalOpen} onOpenChange={open => {
-        setOrderModalOpen(open);
-        if (!open) { setSelectedRecord(null); setOrderDetails(null); setOrderError(null); }
-      }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Case Details
-              {selectedRecord?.case_number && (
-                <span className="ml-1 font-mono text-sm font-normal text-muted-foreground">
-                  — {selectedRecord.case_number}
-                </span>
-              )}
-            </DialogTitle>
-          </DialogHeader>
-
-          {orderLoading && (
-            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Fetching case details…
-            </div>
-          )}
-
-          {!orderLoading && orderError && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-              {orderError}
-            </div>
-          )}
-
-          {!orderLoading && !orderError && orderDetails && (() => {
-            const pdfUrl = orderDetails.pdfUrl;
-            const fmtJudgmentDate = orderDetails.judgmentDate
-              ? fmtDate(orderDetails.judgmentDate.replace(/\//g, '-'))
-              : '\u2014';
-            return (
-              <div className="space-y-5">
-                {/* Case Information */}
-                <section>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Case Information
-                  </h3>
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                    <div>
-                      <dt className="text-xs text-muted-foreground">Case Number</dt>
-                      <dd className="font-mono font-medium">{orderDetails.caseNumber}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-muted-foreground">Case Type</dt>
-                      <dd className="font-medium">{orderDetails.caseType || '\u2014'}</dd>
-                    </div>
-                    <div className="col-span-2">
-                      <dt className="text-xs text-muted-foreground">Petitioner</dt>
-                      <dd className="font-medium">{orderDetails.petitioner || '\u2014'}</dd>
-                    </div>
-                    <div className="col-span-2">
-                      <dt className="text-xs text-muted-foreground">Respondent</dt>
-                      <dd className="font-medium">{orderDetails.respondent || '\u2014'}</dd>
-                    </div>
-                  </dl>
-                </section>
-
-                {/* Judge Information */}
-                <section>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Judge Information
-                  </h3>
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                    <div className="col-span-2">
-                      <dt className="text-xs text-muted-foreground">Judge</dt>
-                      <dd className="font-medium">{orderDetails.judge || '\u2014'}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-muted-foreground">Judgment Date</dt>
-                      <dd className="font-medium">{fmtJudgmentDate}</dd>
-                    </div>
-                  </dl>
-                </section>
-
-                {/* Order Information */}
-                <section>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Order Information
-                  </h3>
-                  {pdfUrl ? (
-                    <p className="text-sm text-muted-foreground">
-                      Order PDF is available for this case.
-                    </p>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No judgment/order PDF available for this case.
-                    </p>
-                  )}
-                </section>
-
-                {/* Actions */}
-                <div className="flex gap-2 pt-1">
-                  <Button
-                    variant="default"
-                    size="sm"
-                    disabled={!pdfUrl}
-                    onClick={() => pdfUrl && window.open(pdfUrl, '_blank')}
-                    className="gap-1.5"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    View Latest Order
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!pdfUrl}
-                    onClick={() => {
-                      if (!pdfUrl) return;
-                      const link = document.createElement('a');
-                      link.href = pdfUrl;
-                      link.download = `${orderDetails.caseNumber}.pdf`;
-                      link.click();
-                    }}
-                    className="gap-1.5"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Download Order
-                  </Button>
-                </div>
-              </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
 
       {/* ── eCourts Case Details Modal ── */}
       <CaseDetailsModal
