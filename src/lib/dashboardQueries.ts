@@ -117,6 +117,9 @@ export interface ExecKpis {
   totalCases: number;
   pendingCases: number;
   disposedCases: number;
+  activeCases: number;
+  sensitiveCases: number;
+  claPartyCases: number;
   casesListedToday: number;
   upcomingHearings30: number;
   openTasks: number;
@@ -125,6 +128,7 @@ export interface ExecKpis {
   readyForHearing: number;
   counterPending: number;
   documentsAwaited: number;
+  legalOpinionPending: number;
   compliancePending: number;
 }
 
@@ -156,6 +160,7 @@ export interface AdvocatePerformance {
   documentsAwaited: number;
   counterPending: number;
   hearingsThisMonth: number;
+  upcomingHearings: number;
   disposedCases: number;
 }
 
@@ -180,6 +185,8 @@ export interface UpcomingHearingRow {
   hearingDate: string | null;
   openTasks: number;
   status: string | null;
+  advocateStatus: string | null;
+  priority: 'High' | 'Medium' | 'Low';
 }
 
 export interface OverdueTaskRow {
@@ -187,6 +194,7 @@ export interface OverdueTaskRow {
   caseNumber: string | null;
   task: string;
   advocate: string | null;
+  assignedTo: string | null;
   dueDate: string | null;
   daysOverdue: number;
 }
@@ -234,6 +242,8 @@ interface CaseRow {
   advocate_status: string | null;
   next_hearing_date: string | null;
   assigned_advocate_name: string | null;
+  sensitivity: string | null;
+  cla_party_status: string | null;
   created_at: string | null;
 }
 
@@ -276,7 +286,7 @@ function topN(map: Map<string, number>, n: number): CategoryCount[] {
 export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   const [casesRes, tasksRes, listingsRes, connRes] = await Promise.all([
     supabase.from('cases')
-      .select('id, case_number, district, section, case_status, advocate_status, next_hearing_date, assigned_advocate_name, created_at')
+      .select('id, case_number, district, section, case_status, advocate_status, next_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, created_at')
       .range(0, PAGE),
     supabase.from('case_tasks')
       .select('id, case_id, task_title, task_status, due_date, assigned_to_name, created_at, completed_at')
