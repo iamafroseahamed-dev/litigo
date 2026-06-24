@@ -124,7 +124,6 @@ function PartyBlock({ title, items }: { title: string; items: string[] }) {
 
 export function EcourtsHistoryTab({ caseId, fallbackCnr }: { caseId?: string | null; fallbackCnr?: string | null }) {
   const [cnr, setCnr] = useState('');
-  const [orgId, setOrgId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
@@ -151,7 +150,6 @@ export function EcourtsHistoryTab({ caseId, fallbackCnr }: { caseId?: string | n
     setBlocked(false);
     const { cnr: c, orgId: oid } = await resolveCase();
     setCnr(c);
-    setOrgId(oid);
     if (!c) { setData(null); setCachedAt(null); setLoading(false); return; }
 
     if (!force) {

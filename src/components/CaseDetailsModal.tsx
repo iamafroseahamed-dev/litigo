@@ -16,6 +16,9 @@ import { EcourtsHistoryTab } from '@/components/EcourtsHistoryTab';
 import { getEcourtsCaseType } from '@/config/ecourtsCaseTypes';
 import { supabase } from '@/lib/supabase';
 import { advocateStatusClasses } from '@/lib/caseManagement';
+import {
+  recordApiUsage, hasCredits, detectOrganization, fetchActiveOrganizations, NO_CREDITS_MESSAGE,
+} from '@/lib/organizations';
 import type { CaseStatusHistory } from '@/types';
 
 // ── eCourts response shape ──────────────────────────────────────────────────────
@@ -151,6 +154,16 @@ async function writeSupabase(caseId: string, entry: CacheEntry) {
 
 function sleep(ms: number) {
   return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+// Read a case's current organization_id (for credit gating / auto-detection).
+async function getCaseOrgId(id: string): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('cases').select('organization_id').eq('id', id).maybeSingle();
+    return (data?.organization_id as string | null) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // Layer 4 — eCourts API (via serverless proxy) with exponential backoff on 429
@@ -444,6 +457,11 @@ export function CaseDetailsModal({
     }
 
     // ── Layer 4 — eCourts API ──
+    const apiOrgId = id ? await getCaseOrgId(id) : null;
+    if (!(await hasCredits(apiOrgId))) {
+      setError(NO_CREDITS_MESSAGE);
+      return;
+    }
     setLoadingApi(true);
     try {
       const entry = await fetchFromApi(key);
@@ -456,6 +474,9 @@ export function CaseDetailsModal({
       if (id) writeSupabase(id, entry);
       setCaseData(entry.data);
       setSource('eCourts API');
+      // Paid Case Details flow consumes CASE_SEARCH → CASE_DETAIL.
+      recordApiUsage({ organizationId: apiOrgId, caseId: id, endpoint: 'CASE_SEARCH', requestId: entry.requestId, cnr: key });
+      recordApiUsage({ organizationId: apiOrgId, caseId: id, endpoint: 'CASE_DETAIL', requestId: entry.requestId, cnr: key });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to retrieve case details. Please try again later.');
     } finally {
@@ -468,6 +489,12 @@ export function CaseDetailsModal({
     const key = String(caseNumber ?? '').trim();
     if (!key || !caseId) {
       toast.error('Unable to synchronize case details.');
+      return;
+    }
+
+    const existingOrgId = await getCaseOrgId(caseId);
+    if (!(await hasCredits(existingOrgId))) {
+      toast.error(NO_CREDITS_MESSAGE);
       return;
     }
 
@@ -506,6 +533,18 @@ export function CaseDetailsModal({
       const disposal = strOrNull(cd.natureOfDisposal);
       if (disposal) update.nature_of_disposal = disposal;
 
+      // Automatic organization detection from party names. A manually-set
+      // organization_id (existingOrgId) always wins and is never overwritten.
+      let syncOrgId = existingOrgId;
+      if (!syncOrgId) {
+        const orgs = await fetchActiveOrganizations();
+        const detected = detectOrganization(
+          [...(cd.petitioners ?? []), ...(cd.respondents ?? []), ...(cd.petitionerAdvocates ?? []), ...(cd.respondentAdvocates ?? [])],
+          orgs,
+        );
+        if (detected) { syncOrgId = detected; update.organization_id = detected; }
+      }
+
       console.log('[Sync] payload (UPDATE only, .eq id)', { caseId, update });
 
       // UPDATE-ONLY: never insert / upsert / delete. `.select()` returns the
@@ -532,6 +571,10 @@ export function CaseDetailsModal({
       await queryClient.invalidateQueries();
       onSynced?.();
       if (caseId) loadInternalStatus(caseId);
+
+      // Record the paid eCourts flow (CASE_SEARCH → CASE_DETAIL) and deduct credits.
+      recordApiUsage({ organizationId: syncOrgId, caseId, endpoint: 'CASE_SEARCH', requestId: entry.requestId, cnr: key });
+      recordApiUsage({ organizationId: syncOrgId, caseId, endpoint: 'CASE_DETAIL', requestId: entry.requestId, cnr: key });
 
       // Verification re-fetch — confirms the record still exists & is visible.
       const { data: verifyRow, error: verifyError } = await supabase
