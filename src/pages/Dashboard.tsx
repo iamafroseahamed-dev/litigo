@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import {
   Briefcase, Clock, CheckCircle2, CalendarDays, CalendarClock, Gavel,
   ChevronLeft, ChevronRight, ListTodo, AlertTriangle, Link2,
-  MapPin, Users, Trophy, TrendingUp, Layers, Scale,
+  MapPin, Users, Trophy, Layers,
 } from 'lucide-react';
 import {
   fetchCaseStatusBreakdown, fetchDisposalOutcomes,
