@@ -1,6 +1,5 @@
 import { Scale, Mail, User, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { AppFooter } from '@/components/AppFooter';
 import {
   APP_NAME, APP_VERSION, DEVELOPER_NAME, DEVELOPER_EMAIL,
 } from '@/lib/appInfo';
@@ -61,8 +60,6 @@ export default function AboutPage() {
           </div>
         </CardContent>
       </Card>
-
-      <AppFooter className="pt-2" />
     </div>
   );
 }
