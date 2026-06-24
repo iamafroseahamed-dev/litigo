@@ -306,6 +306,13 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   const taskOpen = (t: TaskRow) => (t.task_status ?? '').toLowerCase() !== 'completed';
   const taskOverdue = (t: TaskRow) => taskOpen(t) && !!t.due_date && String(t.due_date) < today;
 
+  // Advocate (internal) status predicates
+  const advEq = (c: CaseRow, status: string) => (c.advocate_status ?? '') === status;
+  const isReadyForHearing = (c: CaseRow) => advEq(c, 'Ready For Hearing');
+  const isCounterPending = (c: CaseRow) => advEq(c, 'Counter Affidavit Pending');
+  const isDocumentsAwaited = (c: CaseRow) => advEq(c, 'Documents Awaited');
+  const isCompliancePending = (c: CaseRow) => advEq(c, 'Order Compliance Pending');
+
   const kpis: ExecKpis = {
     totalCases: cases.length,
     pendingCases: cases.filter(c => isPending(c.case_status)).length,
@@ -314,6 +321,10 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     upcomingHearings30: cases.filter(c => c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30).length,
     openTasks: tasks.filter(taskOpen).length,
     overdueTasks: tasks.filter(taskOverdue).length,
+    readyForHearing: cases.filter(isReadyForHearing).length,
+    counterPending: cases.filter(isCounterPending).length,
+    documentsAwaited: cases.filter(isDocumentsAwaited).length,
+    compliancePending: cases.filter(isCompliancePending).length,
   };
 
   // ── Task lookups keyed by case ──
@@ -325,6 +336,9 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   // ── Districts ──
   const districtMap = new Map<string, DistrictLitigation>();
   const districtDetails: Record<string, DistrictDetail> = {};
+  const districtReady = new Map<string, number>();
+  const districtCounter = new Map<string, number>();
+  const districtDocs = new Map<string, number>();
   for (const c of cases) {
     const key = (c.district ?? '').trim() || 'Unspecified';
     let d = districtMap.get(key);
@@ -332,6 +346,9 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     d.total += 1;
     if (isPending(c.case_status)) d.pending += 1;
     if (isDisposed(c.case_status)) d.disposed += 1;
+    if (isReadyForHearing(c)) districtReady.set(key, (districtReady.get(key) ?? 0) + 1);
+    if (isCounterPending(c)) districtCounter.set(key, (districtCounter.get(key) ?? 0) + 1);
+    if (isDocumentsAwaited(c)) districtDocs.set(key, (districtDocs.get(key) ?? 0) + 1);
   }
   // District details (advocates / hearings / tasks)
   const districtAdvocates = new Map<string, Set<string>>();
