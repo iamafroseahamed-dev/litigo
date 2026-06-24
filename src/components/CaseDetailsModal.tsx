@@ -13,6 +13,7 @@ import { CaseNotesTab } from '@/components/CaseNotesTab';
 import { CaseTasksTab } from '@/components/CaseTasksTab';
 import { CaseConnectionsTab } from '@/components/CaseConnectionsTab';
 import { EcourtsHistoryTab } from '@/components/EcourtsHistoryTab';
+import { AiInsightsTab } from '@/components/AiInsightsTab';
 import { getEcourtsCaseType } from '@/config/ecourtsCaseTypes';
 import { supabase } from '@/lib/supabase';
 import { advocateStatusClasses } from '@/lib/caseManagement';
@@ -687,12 +688,13 @@ export function CaseDetailsModal({
 
         <Tabs value={tab} onValueChange={setTab} className="mt-1">
           <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="overview">Case Information</TabsTrigger>
+            <TabsTrigger value="ecourts">Hearing History</TabsTrigger>
+            <TabsTrigger value="history">Case History</TabsTrigger>
+            <TabsTrigger value="ai">AI Insights</TabsTrigger>
             <TabsTrigger value="notes">Notes</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="connected">Connected Cases</TabsTrigger>
-            <TabsTrigger value="history">Case History</TabsTrigger>
-            <TabsTrigger value="ecourts">eCourts History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -874,6 +876,10 @@ export function CaseDetailsModal({
 
           <TabsContent value="ecourts">
             <EcourtsHistoryTab caseId={caseId} fallbackCnr={caseData?.cnr} />
+          </TabsContent>
+
+          <TabsContent value="ai">
+            <AiInsightsTab caseId={caseId} caseNumber={caseNumber} caseData={caseData} />
           </TabsContent>
         </Tabs>
       </DialogContent>

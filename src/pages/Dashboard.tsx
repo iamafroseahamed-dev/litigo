@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import { TNDistrictMap } from '@/components/TNDistrictMap';
 import { DistrictDrawer } from '@/components/DistrictDrawer';
 import { advocateStatusClasses } from '@/lib/caseManagement';
 import { useOrg } from '@/lib/orgContext';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,10 +87,28 @@ export default function DashboardPage() {
   });
 
   const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null);
+  const [aiAdvocateFilter, setAiAdvocateFilter] = useState<string>('__all__');
+  const [aiDistrictFilter, setAiDistrictFilter] = useState<string>('__all__');
+  const [aiRiskFilter, setAiRiskFilter] = useState<string>('__all__');
 
   const a = exec.data;
   const kp = a?.kpis;
   const drill = selectedDistrict ? a?.districtDetails[selectedDistrict] : undefined;
+  const aiCases = a?.aiCases ?? [];
+  const aiAdvocates = useMemo(() => Array.from(new Set(aiCases.map(c => c.advocate).filter(Boolean))).sort() as string[], [aiCases]);
+  const aiDistricts = useMemo(() => Array.from(new Set(aiCases.map(c => c.district).filter(Boolean))).sort() as string[], [aiCases]);
+  const filteredAiCases = useMemo(() => aiCases.filter(c =>
+    (aiAdvocateFilter === '__all__' || c.advocate === aiAdvocateFilter) &&
+    (aiDistrictFilter === '__all__' || c.district === aiDistrictFilter) &&
+    (aiRiskFilter === '__all__' || c.riskLevel === aiRiskFilter)
+  ), [aiAdvocateFilter, aiCases, aiDistrictFilter, aiRiskFilter]);
+  const aiMetrics = useMemo(() => ({
+    highRisk: filteredAiCases.filter(c => c.riskLevel === 'High').length,
+    immediateAttention: filteredAiCases.filter(c => c.immediateAttention).length,
+    upcomingHearings: filteredAiCases.filter(c => c.upcomingHearing).length,
+    noActivity: filteredAiCases.filter(c => c.noActivity).length,
+    longPending: filteredAiCases.filter(c => c.longPending).length,
+  }), [filteredAiCases]);
 
   return (
     <div className="space-y-6">
@@ -118,6 +137,49 @@ export default function DashboardPage() {
           <KpiCard label="CLA Party Cases" value={kp?.claPartyCases ?? 0}  icon={Landmark}     accent="text-indigo-600"  loading={exec.isLoading} />
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><ShieldAlert className="h-4 w-4 text-rose-600" /> AI Risk Monitoring</CardTitle>
+          <p className="text-xs text-muted-foreground">Counts from cached AI case analyses. Organization scope follows the current organization context.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <Select value={aiAdvocateFilter} onValueChange={setAiAdvocateFilter}>
+              <SelectTrigger><SelectValue placeholder="All Advocates" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Advocates</SelectItem>
+                {aiAdvocates.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={aiDistrictFilter} onValueChange={setAiDistrictFilter}>
+              <SelectTrigger><SelectValue placeholder="All Districts" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Districts</SelectItem>
+                {aiDistricts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={aiRiskFilter} onValueChange={setAiRiskFilter}>
+              <SelectTrigger><SelectValue placeholder="All Risk Levels" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Risk Levels</SelectItem>
+                <SelectItem value="High">High</SelectItem>
+                <SelectItem value="Medium">Medium</SelectItem>
+                <SelectItem value="Low">Low</SelectItem>
+                <SelectItem value="Unknown">Unknown</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <StatCard label="High Risk Cases" value={aiMetrics.highRisk} accent="text-red-600" loading={exec.isLoading} />
+            <StatCard label="Immediate Attention" value={aiMetrics.immediateAttention} accent="text-rose-600" loading={exec.isLoading} />
+            <StatCard label="Upcoming Hearings" value={aiMetrics.upcomingHearings} accent="text-indigo-600" loading={exec.isLoading} />
+            <StatCard label="No Activity" value={aiMetrics.noActivity} accent="text-amber-600" loading={exec.isLoading} />
+            <StatCard label="Long Pending" value={aiMetrics.longPending} accent="text-orange-600" loading={exec.isLoading} />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Tamil Nadu Litigation Heat Map — click a district for full analytics */}
       <TNDistrictMap

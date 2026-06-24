@@ -113,6 +113,66 @@ export interface CaseStatusHistory {
   changed_at: string;
 }
 
+export interface AiCaseAnalysisJson {
+  executive_summary: {
+    case_about: string;
+    key_dispute: string;
+  };
+  parties: {
+    petitioners: string[];
+    respondents: string[];
+    advocates: string[];
+  };
+  case_status: {
+    status: string;
+    current_stage: string;
+  };
+  hearing_analysis: {
+    total_hearings: number;
+    hearing_trend: string;
+    delays: string;
+  };
+  key_legal_observations: {
+    important_legal_issues: string[];
+    risks: string[];
+    potential_impact: string[];
+  };
+  timeline_summary: {
+    filing_date: string;
+    first_hearing: string;
+    last_hearing: string;
+    next_hearing: string;
+  };
+  advocate_action_items: {
+    immediate_actions: string[];
+    documents_required: string[];
+    follow_up_recommendations: string[];
+  };
+  risk_assessment: {
+    level: 'Low' | 'Medium' | 'High';
+    reason: string;
+  };
+  department_impact: {
+    organization_impact: string;
+    department_impact: string;
+  };
+  recommended_next_steps: string[];
+  attention_required: boolean;
+  no_activity: boolean;
+  long_pending: boolean;
+  upcoming_hearing: boolean;
+}
+
+export interface CaseAiAnalysis {
+  id: string;
+  case_id: string;
+  cnr_number: string | null;
+  ai_summary: string | null;
+  ai_json: AiCaseAnalysisJson | null;
+  generated_at: string;
+  generated_by: string | null;
+}
+
 export interface CauseList {
   id: string;
   cause_date: string;

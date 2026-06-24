@@ -224,6 +224,19 @@ export interface TrendPoint {
   tasksCompleted: number;
 }
 
+export interface AiCaseSnapshot {
+  caseId: string;
+  caseNumber: string | null;
+  advocate: string | null;
+  district: string | null;
+  riskLevel: 'Low' | 'Medium' | 'High' | 'Unknown';
+  immediateAttention: boolean;
+  upcomingHearing: boolean;
+  noActivity: boolean;
+  longPending: boolean;
+  generatedAt: string | null;
+}
+
 export interface ExecutiveAnalytics {
   kpis: ExecKpis;
   districts: DistrictLitigation[];
@@ -239,6 +252,7 @@ export interface ExecutiveAnalytics {
   causeList: CauseListAnalytics;
   trend: TrendPoint[];
   advocateStatusDistribution: CategoryCount[];
+  aiCases: AiCaseSnapshot[];
 }
 
 interface CaseRow {
@@ -253,6 +267,7 @@ interface CaseRow {
   sensitivity: string | null;
   cla_party_status: string | null;
   created_at: string | null;
+  updated_at: string | null;
 }
 
 interface TaskRow {
@@ -298,7 +313,7 @@ function orgOrLegacyFilter(orgId?: string | null): string | null {
 
 export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<ExecutiveAnalytics> {
   let casesQuery = supabase.from('cases')
-    .select('id, case_number, district, section, case_status, advocate_status, next_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, created_at, organization_id')
+    .select('id, case_number, district, section, case_status, advocate_status, next_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, created_at, updated_at, organization_id')
     .range(0, PAGE);
   const scopedFilter = orgOrLegacyFilter(orgId);
   if (scopedFilter) casesQuery = casesQuery.or(scopedFilter);
@@ -325,6 +340,13 @@ export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<Ex
       .select('id, case_id, task_title, task_status, due_date, assigned_to_name, created_at, completed_at')
       .in('case_id', Array.from(caseIds))
       .range(0, PAGE)).data ?? []) as TaskRow[];
+
+  const aiRows = caseIds.size === 0
+    ? []
+    : ((await supabase.from('case_ai_analysis')
+      .select('case_id, ai_json, generated_at')
+      .in('case_id', Array.from(caseIds))
+      .range(0, PAGE)).data ?? []) as Array<{ case_id: string; ai_json: Record<string, unknown> | null; generated_at: string | null }>;
 
   const connectedTotal = connRes.error
     ? 0
@@ -685,6 +707,28 @@ export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<Ex
   }
   const trend = months.map(m => trendMap.get(m)!);
 
+  const aiCases: AiCaseSnapshot[] = aiRows.map(row => {
+    const c = caseById.get(row.case_id);
+    const ai = (row.ai_json ?? {}) as Record<string, unknown>;
+    const risk = ((ai.risk_assessment as Record<string, unknown> | undefined)?.level as string | undefined) ?? 'Unknown';
+    const updatedAt = c?.updated_at ? new Date(String(c.updated_at)).getTime() : 0;
+    const createdAt = c?.created_at ? new Date(String(c.created_at)).getTime() : 0;
+    const ageDays = createdAt > 0 ? Math.floor((now.getTime() - createdAt) / 86400000) : 0;
+    const staleDays = updatedAt > 0 ? Math.floor((now.getTime() - updatedAt) / 86400000) : 9999;
+    return {
+      caseId: row.case_id,
+      caseNumber: c?.case_number ?? null,
+      advocate: c?.assigned_advocate_name ?? null,
+      district: c?.district ?? null,
+      riskLevel: (risk === 'Low' || risk === 'Medium' || risk === 'High' ? risk : 'Unknown'),
+      immediateAttention: Boolean(ai.attention_required ?? (risk === 'High')),
+      upcomingHearing: Boolean(ai.upcoming_hearing ?? (c?.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30)),
+      noActivity: Boolean(ai.no_activity ?? (staleDays >= 30)),
+      longPending: Boolean(ai.long_pending ?? (!isDisposed(c?.case_status ?? null) && ageDays >= 365)),
+      generatedAt: row.generated_at ?? null,
+    };
+  });
+
   return {
     kpis,
     districts,
@@ -700,6 +744,7 @@ export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<Ex
     causeList,
     trend,
     advocateStatusDistribution,
+    aiCases,
   };
 }
 
