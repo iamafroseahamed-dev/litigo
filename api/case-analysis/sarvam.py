@@ -257,6 +257,70 @@ def _extract_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError('No parseable JSON analysis payload found in Sarvam response')
 
 
+def _truncate(value: Any, limit: int = 500) -> Any:
+    if isinstance(value, str):
+        value = value.strip()
+        return value if len(value) <= limit else value[:limit] + '...'
+    if isinstance(value, list):
+        return [_truncate(v, limit) for v in value[:12]]
+    if isinstance(value, dict):
+        compact: Dict[str, Any] = {}
+        for idx, (k, v) in enumerate(value.items()):
+            if idx >= 20:
+                break
+            compact[str(k)] = _truncate(v, limit)
+        return compact
+    return value
+
+
+def _compact_context(context: Dict[str, Any]) -> str:
+    case_record = _as_dict(context.get('caseRecord'))
+    case_details = _as_dict(context.get('caseDetailsJson'))
+
+    compact = {
+        'caseNumber': _truncate(context.get('caseNumber'), 120),
+        'caseRecord': {
+            'district': _truncate(case_record.get('district'), 120),
+            'section': _truncate(case_record.get('section'), 120),
+            'advocate_status': _truncate(case_record.get('advocate_status'), 120),
+            'assigned_advocate_name': _truncate(case_record.get('assigned_advocate_name'), 120),
+            'case_status': _truncate(case_record.get('case_status'), 120),
+            'next_hearing_date': _truncate(case_record.get('next_hearing_date'), 120),
+            'updated_at': _truncate(case_record.get('updated_at'), 120),
+        },
+        'caseDetails': {
+            'registrationNumber': _truncate(case_details.get('registrationNumber'), 120),
+            'filingDate': _truncate(case_details.get('filingDate'), 120),
+            'registrationDate': _truncate(case_details.get('registrationDate'), 120),
+            'cnr': _truncate(case_details.get('cnr'), 120),
+            'caseStatus': _truncate(case_details.get('caseStatus'), 120),
+            'natureOfDisposal': _truncate(case_details.get('natureOfDisposal'), 120),
+            'courtName': _truncate(case_details.get('courtName'), 180),
+            'judicialSection': _truncate(case_details.get('judicialSection'), 180),
+            'firstHearingDate': _truncate(case_details.get('firstHearingDate'), 120),
+            'lastHearingDate': _truncate(case_details.get('lastHearingDate'), 120),
+            'nextHearingDate': _truncate(case_details.get('nextHearingDate'), 120),
+            'hearingCount': case_details.get('hearingCount'),
+            'orderCount': case_details.get('orderCount'),
+            'interimOrderCount': case_details.get('interimOrderCount'),
+            'judgmentCount': case_details.get('judgmentCount'),
+            'petitioners': _truncate(case_details.get('petitioners'), 180),
+            'respondents': _truncate(case_details.get('respondents'), 180),
+            'petitionerAdvocates': _truncate(case_details.get('petitionerAdvocates'), 180),
+            'respondentAdvocates': _truncate(case_details.get('respondentAdvocates'), 180),
+            'judges': _truncate(case_details.get('judges'), 180),
+        },
+        'hearingHistory': _truncate(context.get('hearingHistory'), 250),
+        'interimOrders': _truncate(context.get('interimOrders'), 250),
+        'orders': _truncate(context.get('orders'), 250),
+        'judgmentDetails': _truncate(context.get('judgmentDetails'), 250),
+        'caseNotes': _truncate(context.get('caseNotes'), 250),
+        'internalTasks': _truncate(context.get('internalTasks'), 250),
+        'advocateStatusTimeline': _truncate(context.get('advocateStatusTimeline'), 250),
+    }
+    return json.dumps(compact, ensure_ascii=False)[:18000]
+
+
 def _make_payload(case_number: str, prompt_context: str, structured: bool) -> Dict[str, Any]:
     user_content = (
         'Analyse the following case and provide: executive summary, parties, case status, hearing analysis, legal observations, timeline summary, advocate action items, risk assessment, department impact, and recommended next steps. '
@@ -270,7 +334,7 @@ def _make_payload(case_number: str, prompt_context: str, structured: bool) -> Di
         'model': SARVAM_MODEL,
         'temperature': 0.2,
         'reasoning_effort': 'medium',
-        'max_tokens': 1800,
+        'max_tokens': 1400,
         'messages': [
             {
                 'role': 'system',
@@ -333,8 +397,8 @@ class handler(BaseHTTPRequestHandler):
             self._json({'success': False, 'message': 'caseNumber and context are required.'}, 400)
             return
 
-        prompt_context = json.dumps(context, ensure_ascii=False)[:120000]
-        payload = _make_payload(case_number, prompt_context, structured=True)
+        prompt_context = _compact_context(context)
+        payload = _make_payload(case_number, prompt_context, structured=False)
 
         headers = {
             'api-subscription-key': api_key,
@@ -375,7 +439,7 @@ class handler(BaseHTTPRequestHandler):
             fallback_preview = ''
             fallback_detail = str(exc)
             try:
-                fallback_resp = _post_sarvam(headers, _make_payload(case_number, prompt_context, structured=False))
+                fallback_resp = _post_sarvam(headers, _make_payload(case_number, prompt_context[:12000], structured=False))
                 fallback_resp.raise_for_status()
                 fallback_result = fallback_resp.json()
                 analysis = _extract_analysis(fallback_result)
