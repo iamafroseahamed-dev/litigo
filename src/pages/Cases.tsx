@@ -37,7 +37,7 @@ type FormData = Omit<Case, 'id' | 'organization_id' | 'created_at' | 'updated_at
 
 const TASK_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
 
-interface DraftTask { task_title: string; priority: string; due_date: string | null; }
+interface DraftTask { task_title: string; task_description: string; assigned_to_name: string; assigned_to_email: string; assigned_to_mobile: string; priority: string; due_date: string | null; }
 interface DraftConnection { case: CaseSearchResult; relationship_type: string; }
 interface CaseFormExtras { notes: string[]; tasks: DraftTask[]; connections: DraftConnection[]; }
 
@@ -114,7 +114,7 @@ function CaseForm({ initial, advocates, onSave, onCancel, saving }: {
   const [notes, setNotes] = useState<string[]>([]);
   const [noteDraft, setNoteDraft] = useState('');
   const [tasks, setTasks] = useState<DraftTask[]>([]);
-  const [taskDraft, setTaskDraft] = useState<DraftTask>({ task_title: '', priority: 'Medium', due_date: null });
+  const [taskDraft, setTaskDraft] = useState<DraftTask>({ task_title: '', task_description: '', assigned_to_name: '', assigned_to_email: '', assigned_to_mobile: '', priority: 'Medium', due_date: null });
   const [connections, setConnections] = useState<DraftConnection[]>([]);
   const [connOpen, setConnOpen] = useState(false);
 
@@ -134,7 +134,7 @@ function CaseForm({ initial, advocates, onSave, onCancel, saving }: {
   const selectedAdvocateId = advocates.find(a => a.advocate_name === form.assigned_advocate_name)?.id ?? '__none__';
 
   const addNote = () => { const v = noteDraft.trim(); if (!v) return; setNotes(p => [...p, v]); setNoteDraft(''); };
-  const addTask = () => { const t = taskDraft.task_title.trim(); if (!t) return; setTasks(p => [...p, { ...taskDraft, task_title: t }]); setTaskDraft({ task_title: '', priority: 'Medium', due_date: null }); };
+  const addTask = () => { const t = taskDraft.task_title.trim(); if (!t) return; setTasks(p => [...p, { ...taskDraft, task_title: t }]); setTaskDraft({ task_title: '', task_description: '', assigned_to_name: '', assigned_to_email: '', assigned_to_mobile: '', priority: 'Medium', due_date: null }); };
 
   return (
     <div className="overflow-y-auto max-h-[65vh] pr-1 space-y-5">
@@ -294,22 +294,40 @@ function CaseForm({ initial, advocates, onSave, onCancel, saving }: {
 
       <div className="space-y-3">
         <SectionHeader title="Tasks" />
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+        <p className="text-[11px] text-muted-foreground -mt-1">
+          Tasks can be assigned to anyone (Legal Officer, Assistant, Advocate, Case Worker, Clerk or external user) — independent of the case advocate.
+        </p>
+        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
           <Input placeholder="Task title…" value={taskDraft.task_title}
             onChange={e => setTaskDraft(p => ({ ...p, task_title: e.target.value }))} />
-          <Select value={taskDraft.priority} onValueChange={v => setTaskDraft(p => ({ ...p, priority: v }))}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>{TASK_PRIORITIES.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-          </Select>
-          <Input type="date" className="w-40" value={taskDraft.due_date ?? ''}
-            onChange={e => setTaskDraft(p => ({ ...p, due_date: e.target.value || null }))} />
-          <Button type="button" variant="outline" onClick={addTask}><Plus className="h-4 w-4" /></Button>
+          <Input placeholder="Task description (optional)…" value={taskDraft.task_description}
+            onChange={e => setTaskDraft(p => ({ ...p, task_description: e.target.value }))} />
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Input placeholder="Assignee name" value={taskDraft.assigned_to_name}
+              onChange={e => setTaskDraft(p => ({ ...p, assigned_to_name: e.target.value }))} />
+            <Input placeholder="Assignee email" value={taskDraft.assigned_to_email}
+              onChange={e => setTaskDraft(p => ({ ...p, assigned_to_email: e.target.value }))} />
+            <Input placeholder="Assignee mobile" value={taskDraft.assigned_to_mobile}
+              onChange={e => setTaskDraft(p => ({ ...p, assigned_to_mobile: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_auto]">
+            <Select value={taskDraft.priority} onValueChange={v => setTaskDraft(p => ({ ...p, priority: v }))}>
+              <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+              <SelectContent>{TASK_PRIORITIES.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+            </Select>
+            <Input type="date" value={taskDraft.due_date ?? ''}
+              onChange={e => setTaskDraft(p => ({ ...p, due_date: e.target.value || null }))} />
+            <Button type="button" variant="outline" className="gap-1" onClick={addTask}><Plus className="h-4 w-4" /> Add Task</Button>
+          </div>
         </div>
         {tasks.length > 0 && (
           <ul className="space-y-1">
             {tasks.map((t, i) => (
               <li key={i} className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
-                <span className="truncate">{t.task_title} · <span className="text-muted-foreground">{t.priority}{t.due_date ? ` · ${t.due_date}` : ''}</span></span>
+                <span className="truncate">
+                  {t.task_title}
+                  <span className="text-muted-foreground"> · {t.priority}{t.due_date ? ` · ${t.due_date}` : ''}{t.assigned_to_name ? ` · ${t.assigned_to_name}` : ''}</span>
+                </span>
                 <button type="button" className="text-red-500 hover:text-red-700" onClick={() => setTasks(p => p.filter((_, j) => j !== i))}><X className="h-3.5 w-3.5" /></button>
               </li>
             ))}
@@ -544,8 +562,10 @@ export default function CasesPage() {
       if (extras.tasks.length) {
         await supabase.from('case_tasks').insert(
           extras.tasks.map(t => ({
-            case_id: caseId, task_title: t.task_title, priority: t.priority,
-            due_date: t.due_date, task_status: 'Pending', created_by: createdBy,
+            case_id: caseId, task_title: t.task_title, task_description: t.task_description || null,
+            assigned_to_name: t.assigned_to_name || null, assigned_to_email: t.assigned_to_email || null,
+            assigned_to_mobile: t.assigned_to_mobile || null,
+            priority: t.priority, due_date: t.due_date, task_status: 'Pending', created_by: createdBy,
             created_at: new Date().toISOString(),
           })),
         );

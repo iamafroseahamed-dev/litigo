@@ -14,7 +14,7 @@ import {
 import { AlertTriangle, Loader2, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { TASK_STATUSES, TASK_PRIORITIES, isValidEmail, fmtDate } from '@/lib/caseManagement';
-import type { Advocate, CaseTask, TaskPriority, TaskStatus } from '@/types';
+import type { CaseTask, TaskPriority, TaskStatus } from '@/types';
 
 interface TaskFormState {
   task_title: string;
@@ -57,26 +57,12 @@ export function TaskFormDialog({
   const { user } = useAuth();
   const [form, setForm] = useState<TaskFormState>(EMPTY);
   const [saving, setSaving] = useState(false);
-  const [advocates, setAdvocates] = useState<Advocate[]>([]);
-  const [advocateId, setAdvocateId] = useState<string>('');
   const [notify, setNotify] = useState<PendingNotify | null>(null);
   const [notifyBusy, setNotifyBusy] = useState(false);
   const isEdit = !!task;
 
-  // Advocate master for the assignment dropdown
   useEffect(() => {
     if (!open) return;
-    supabase
-      .from('advocates')
-      .select('id, advocate_name, email, mobile, designation, active, created_at')
-      .eq('active', true)
-      .order('advocate_name', { ascending: true })
-      .then(({ data }) => setAdvocates((data ?? []) as Advocate[]));
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    setAdvocateId('');
     if (task) {
       setForm({
         task_title: task.task_title ?? '',
@@ -101,19 +87,6 @@ export function TaskFormDialog({
 
   const txt = (f: keyof TaskFormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(p => ({ ...p, [f]: e.target.value }));
-
-  function pickAdvocate(id: string) {
-    setAdvocateId(id);
-    const a = advocates.find(x => x.id === id);
-    if (a) {
-      setForm(p => ({
-        ...p,
-        assigned_to_name: a.advocate_name ?? '',
-        assigned_to_email: a.email ?? '',
-        assigned_to_mobile: a.mobile ?? '',
-      }));
-    }
-  }
 
   const emailRaw = form.assigned_to_email.trim();
   const emailInvalid = emailRaw !== '' && !isValidEmail(emailRaw);
@@ -261,46 +234,39 @@ export function TaskFormDialog({
               <Textarea value={form.task_description} onChange={txt('task_description')} rows={2} />
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Assigned Advocate</Label>
-              <Select value={advocateId} onValueChange={pickAdvocate}>
-                <SelectTrigger><SelectValue placeholder="Select advocate" /></SelectTrigger>
-                <SelectContent>
-                  {advocates.length === 0 ? (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">No advocates found. Add them to the advocate master.</div>
-                  ) : advocates.map(a => (
-                    <SelectItem key={a.id} value={a.id}>
-                      {a.advocate_name}{a.designation ? ` \u00b7 ${a.designation}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assignee</p>
+              <p className="mb-3 text-[11px] text-muted-foreground">
+                Tasks can be assigned to anyone (Legal Officer, Assistant, Advocate, Case Worker, Clerk or external user) — not limited to the case advocate.
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs font-medium">Assignee Name</Label>
+                  <Input value={form.assigned_to_name} onChange={txt('assigned_to_name')} placeholder="e.g. Mary" />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs font-medium">Assignee Email</Label>
+                  <Input
+                    value={form.assigned_to_email}
+                    onChange={txt('assigned_to_email')}
+                    placeholder="assignee@example.com"
+                    className={emailInvalid ? 'border-red-400 focus-visible:ring-red-400' : ''}
+                  />
+                  {emailInvalid && (
+                    <p className="flex items-center gap-1 text-xs text-red-600">
+                      <AlertTriangle className="h-3 w-3" />
+                      Email notification unavailable. Valid email address not found.
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs font-medium">Assignee Mobile</Label>
+                  <Input value={form.assigned_to_mobile} onChange={txt('assigned_to_mobile')} placeholder="+91…" />
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Advocate Name</Label>
-                <Input value={form.assigned_to_name} onChange={txt('assigned_to_name')} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Mobile Number</Label>
-                <Input value={form.assigned_to_mobile} onChange={txt('assigned_to_mobile')} />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label className="text-xs font-medium">Email Address</Label>
-                <Input
-                  value={form.assigned_to_email}
-                  onChange={txt('assigned_to_email')}
-                  placeholder="advocate@cla.gov.in"
-                  className={emailInvalid ? 'border-red-400 focus-visible:ring-red-400' : ''}
-                />
-                {emailInvalid && (
-                  <p className="flex items-center gap-1 text-xs text-red-600">
-                    <AlertTriangle className="h-3 w-3" />
-                    Email notification unavailable. Valid email address not found.
-                  </p>
-                )}
-              </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">Due Date</Label>
                 <Input type="date" value={form.due_date} onChange={txt('due_date')} />

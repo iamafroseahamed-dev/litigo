@@ -92,13 +92,13 @@ export async function loadConnectionCounts(): Promise<Record<string, number>> {
 }
 
 // Free-text search over the cases table for the connection picker.
-export async function searchCases(query: string, excludeIds: string[] = []): Promise<CaseSearchResult[]> {
+export async function searchCases(query: string, excludeIds: string[] = [], limit = 50): Promise<CaseSearchResult[]> {
   const q = query.trim().replace(/[,()%]/g, ' ');
   let req = supabase
     .from('cases')
     .select('id, case_number, court_name, case_status, next_hearing_date, petitioner, respondent, cnr_number')
     .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(limit);
   if (q) {
     req = req.or(
       `case_number.ilike.%${q}%,petitioner.ilike.%${q}%,respondent.ilike.%${q}%,cnr_number.ilike.%${q}%`,

@@ -1,13 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- Adalat360 — Connected / linked cases
---
---   1. `case_connections` — many-to-many mapping between related cases
---   2. `cases.parent_case_id` — optional parent → child matter linkage
---
--- Connections are conceptually bidirectional: a row (parent → connected) is shown
--- on BOTH cases in the UI. The unique constraint only blocks exact duplicates in
--- the same direction; the app additionally guards the reverse direction.
--- ─────────────────────────────────────────────────────────────────────────────
 
 create table if not exists public.case_connections (
   id                uuid primary key default gen_random_uuid(),

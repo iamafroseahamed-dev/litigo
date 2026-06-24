@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -6,15 +6,21 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { RELATIONSHIP_TYPES, searchCases, type CaseSearchResult } from '@/lib/connections';
 
+const PAGE_SIZE = 8;
+
 /**
- * Reusable "Add Connected Case" picker. Lets the user pick a relationship type,
- * search the `cases` table, and add results one by one (stays open for multiple).
+ * Full-size "Search Connected Case" modal. Pick a relationship type, search the
+ * `cases` table across Case Number / Petitioner / Respondent / CNR, then select
+ * a case from a paginated, scrollable results grid. Stays open for multiple adds.
  * The host decides what `onAdd` does (insert a connection, or push to a draft).
  */
 export function AddConnectionDialog({
@@ -30,9 +36,10 @@ export function AddConnectionDialog({
   const [results, setResults] = useState<CaseSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
-    if (!open) { setQuery(''); setResults([]); setRelationship('Connected'); }
+    if (!open) { setQuery(''); setResults([]); setRelationship('Connected'); setPage(1); }
   }, [open]);
 
   useEffect(() => {
@@ -42,7 +49,7 @@ export function AddConnectionDialog({
     const t = setTimeout(async () => {
       try {
         const rows = await searchCases(query, excludeIds);
-        if (!cancelled) setResults(rows);
+        if (!cancelled) { setResults(rows); setPage(1); }
       } catch (e) {
         if (!cancelled) toast.error(e instanceof Error ? e.message : 'Search failed.');
       } finally {
@@ -52,7 +59,13 @@ export function AddConnectionDialog({
     return () => { cancelled = true; clearTimeout(t); };
   }, [query, open, excludeIds]);
 
-  async function add(row: CaseSearchResult) {
+  const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
+  const pageRows = useMemo(
+    () => results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [results, page],
+  );
+
+  async function select(row: CaseSearchResult) {
     setBusyId(row.id);
     try {
       await onAdd(row, relationship);
@@ -63,13 +76,13 @@ export function AddConnectionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="flex max-h-[88vh] w-[95vw] flex-col overflow-hidden sm:max-w-[900px]">
         <DialogHeader>
-          <DialogTitle>Add Connected Case</DialogTitle>
-          <DialogDescription>Search by case number, petitioner, respondent or CNR, then add.</DialogDescription>
+          <DialogTitle>Search Connected Case</DialogTitle>
+          <DialogDescription>Search by Case Number, Petitioner, Respondent or CNR Number, then select a case to link.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[220px_1fr]">
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Relationship</Label>
             <Select value={relationship} onValueChange={setRelationship}>
@@ -79,45 +92,76 @@ export function AddConnectionDialog({
               </SelectContent>
             </Select>
           </div>
-
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              className="pl-8"
-              placeholder="Search cases…"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
-          </div>
-
-          <div className="rounded-md border">
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Searching…
-              </div>
-            ) : results.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">No matching cases.</p>
-            ) : (
-              <ul className="divide-y">
-                {results.map(r => (
-                  <li key={r.id} className="flex items-center justify-between gap-2 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-xs font-semibold">{r.case_number || '—'}</p>
-                      <p className="truncate text-xs text-muted-foreground" title={`${r.petitioner ?? ''} vs ${r.respondent ?? ''}`}>
-                        {(r.petitioner || '—')} vs {(r.respondent || '—')}
-                      </p>
-                    </div>
-                    <Button size="sm" variant="outline" className="h-7 shrink-0 gap-1 text-xs"
-                      disabled={busyId === r.id} onClick={() => add(r)}>
-                      {busyId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-                      Add
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Search</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Case Number, Petitioner, Respondent or CNR Number…"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
           </div>
         </div>
+
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Searching…
+            </div>
+          ) : results.length === 0 ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">No matching cases.</p>
+          ) : (
+            <Table className="min-w-[820px]">
+              <TableHeader className="sticky top-0 z-10 bg-background">
+                <TableRow>
+                  <TableHead>Case Number</TableHead>
+                  <TableHead>Petitioner</TableHead>
+                  <TableHead>Respondent</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pageRows.map(r => (
+                  <TableRow key={r.id}>
+                    <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">{r.case_number || '—'}</TableCell>
+                    <TableCell className="max-w-[220px] truncate text-xs" title={r.petitioner ?? ''}>{r.petitioner || '—'}</TableCell>
+                    <TableCell className="max-w-[220px] truncate text-xs" title={r.respondent ?? ''}>{r.respondent || '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">{r.case_status || '—'}</TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="outline" className="h-7 gap-1 text-xs"
+                        disabled={busyId === r.id} onClick={() => select(r)}>
+                        {busyId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        Select
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        {results.length > 0 && (
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{results.length} result{results.length !== 1 ? 's' : ''}</span>
+            <div className="flex items-center gap-2">
+              <Button size="icon" variant="outline" className="h-7 w-7"
+                disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="min-w-[80px] text-center">Page {page} of {totalPages}</span>
+              <Button size="icon" variant="outline" className="h-7 w-7"
+                disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
