@@ -28,6 +28,7 @@ import { addConnection, loadConnectionCounts, type CaseSearchResult } from '@/li
 import { ADVOCATE_STATUSES, advocateStatusClasses, advocateStatusShort } from '@/lib/caseManagement';
 import { DEVELOPER_NAME, DEVELOPER_EMAIL } from '@/lib/appInfo';
 import { useAuth } from '@/lib/auth';
+import { useOrg } from '@/lib/orgContext';
 import type { Case, Advocate } from '@/types';
 
 const COURTS = [
@@ -457,6 +458,9 @@ export default function CasesPage() {
   // ── Connected cases counts ───────────────────────────────────────────────────
   const [connCounts, setConnCounts]         = useState<Record<string, number>>({});
   const { user } = useAuth();
+  const { org } = useOrg();
+  const orgId = org?.id ?? null;
+  const isAdmin = user?.profile?.role === 'admin';
   const createdBy = user?.profile?.full_name || user?.email || 'Unknown';
 
   const loadConnCounts = useCallback(async () => {
@@ -532,9 +536,43 @@ export default function CasesPage() {
   const setFilter = (key: keyof Filters) => (v: string) =>
     setFilters(p => ({ ...p, [key]: v === '__all__' ? '' : v }));
 
+  // Organization scoping. Cases with NO organization_id are NEVER hidden — they
+  // stay visible (with a console warning + admin bulk-assign) so legacy data is
+  // not lost after the multi-org rollout. When no org is resolved we show all.
+  const orgScoped = useMemo(() => {
+    if (!orgId) return cases;
+    return cases.filter(c => !c.organization_id || c.organization_id === orgId);
+  }, [cases, orgId]);
+
+  const unassignedCount = useMemo(() => cases.filter(c => !c.organization_id).length, [cases]);
+
+  useEffect(() => {
+    if (unassignedCount > 0) {
+      console.warn(`[Cases] ${unassignedCount} case(s) have no organization_id. They remain visible; an admin can bulk-assign them.`);
+    }
+  }, [unassignedCount]);
+
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+  async function bulkAssignUnassigned() {
+    if (!orgId) { toast.error('No organization to assign.'); return; }
+    setBulkAssigning(true);
+    try {
+      const ids = cases.filter(c => !c.organization_id).map(c => c.id);
+      if (ids.length === 0) return;
+      const { error: err } = await supabase.from('cases').update({ organization_id: orgId }).in('id', ids);
+      if (err) throw new Error(err.message);
+      toast.success(`Assigned ${ids.length} case(s) to ${org?.organization_name ?? 'organization'}.`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Bulk assign failed.');
+    } finally {
+      setBulkAssigning(false);
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return cases.filter(c => {
+    return orgScoped.filter(c => {
       const matchSearch = !q ||
         (c.case_number ?? '').toLowerCase().includes(q) ||
         (c.cnr_number ?? '').toLowerCase().includes(q) ||
@@ -552,7 +590,7 @@ export default function CasesPage() {
         (filters.active === '' || (filters.active === 'active' ? c.active : !c.active));
       return matchSearch && matchFilters;
     });
-  }, [cases, search, filters]);
+  }, [orgScoped, search, filters]);
 
   const hasFilters = search || Object.values(filters).some(Boolean);
   const clearFilters = () => { setSearch(''); setFilters(EMPTY_FILTERS); };
