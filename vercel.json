@@ -7,7 +7,8 @@
     "api/match-todays-listings.py": { "maxDuration": 60 },
     "api/debug/match-case.py": { "maxDuration": 30 },
     "api/mhc/case-status.py": { "maxDuration": 30 },
-    "api/case-details/search.py": { "maxDuration": 30 }
+    "api/case-details/search.py": { "maxDuration": 30 },
+    "api/case-analysis/sarvam.py": { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
