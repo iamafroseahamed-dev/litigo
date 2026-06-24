@@ -16,13 +16,19 @@ export type EcourtsEndpoint = keyof typeof ECOURTS_ENDPOINTS;
 export const PLAN_NAMES = ['Trial', 'Standard', 'Enterprise'] as const;
 export type PlanName = (typeof PLAN_NAMES)[number];
 
+export interface EndpointUsage {
+  endpoint: string;
+  calls: number;
+  rate: number;          // amount_per_call — the subscriber rate applied (₹)
+  amountCharged: number; // calls × rate (₹)
+}
+
 export interface OrgUsageSummary {
-  creditsConsumed: number;
+  amountCharged: number;    // total ₹ charged across all usage
   apiCalls: number;
   casesSynced: number;
-  creditsThisMonth: number;
-  costThisMonth: number;
-  byEndpoint: { endpoint: string; calls: number; credits: number }[];
+  amountThisMonth: number;  // ₹ charged in the current calendar month
+  byEndpoint: EndpointUsage[];
   lastSync: string | null;
 }
 
@@ -178,42 +184,44 @@ export async function fetchUsageForOrg(orgId: string): Promise<EcourtsApiUsage[]
   }
 }
 
+// Always price usage with the CURRENT subscriber pricing table (amount_per_call),
+// so the displayed "Amount Charged" reflects subscriber rates regardless of what
+// was recorded historically.
 export function summarizeUsage(rows: EcourtsApiUsage[], pricing: EcourtsApiPricing[]): OrgUsageSummary {
-  const priceByEndpoint = new Map(pricing.map(p => [p.endpoint_name, p]));
+  const rateByEndpoint = new Map(pricing.map(p => [p.endpoint_name, Number(p.amount_per_call ?? 0)]));
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-  const endpointMap = new Map<string, { calls: number; credits: number }>();
+  const callsByEndpoint = new Map<string, number>();
   const syncedCases = new Set<string>();
-  let creditsConsumed = 0;
-  let creditsThisMonth = 0;
-  let costThisMonth = 0;
+  let amountThisMonth = 0;
   let lastSync: string | null = null;
 
   for (const r of rows) {
-    const credits = Number(r.credits_used ?? 0);
     const ep = r.endpoint_name ?? 'UNKNOWN';
-    const e = endpointMap.get(ep) ?? { calls: 0, credits: 0 };
-    e.calls += 1; e.credits += credits;
-    endpointMap.set(ep, e);
-    creditsConsumed += credits;
+    callsByEndpoint.set(ep, (callsByEndpoint.get(ep) ?? 0) + 1);
     if (r.case_id) syncedCases.add(r.case_id);
     if (!lastSync || String(r.created_at) > lastSync) lastSync = String(r.created_at);
     if (String(r.created_at ?? '').slice(0, 7) === monthKey) {
-      creditsThisMonth += credits;
-      costThisMonth += Number(priceByEndpoint.get(ep)?.amount_per_call ?? 0);
+      amountThisMonth += rateByEndpoint.get(ep) ?? 0;
     }
   }
 
+  const byEndpoint: EndpointUsage[] = Array.from(callsByEndpoint.entries())
+    .map(([endpoint, calls]) => {
+      const rate = rateByEndpoint.get(endpoint) ?? 0;
+      return { endpoint, calls, rate, amountCharged: +(calls * rate).toFixed(2) };
+    })
+    .sort((a, b) => b.amountCharged - a.amountCharged);
+
+  const amountCharged = +byEndpoint.reduce((s, e) => s + e.amountCharged, 0).toFixed(2);
+
   return {
-    creditsConsumed,
+    amountCharged,
     apiCalls: rows.length,
     casesSynced: syncedCases.size,
-    creditsThisMonth,
-    costThisMonth,
-    byEndpoint: Array.from(endpointMap.entries())
-      .map(([endpoint, v]) => ({ endpoint, calls: v.calls, credits: v.credits }))
-      .sort((a, b) => b.credits - a.credits),
+    amountThisMonth: +amountThisMonth.toFixed(2),
+    byEndpoint,
     lastSync,
   };
 }
