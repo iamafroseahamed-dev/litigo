@@ -586,6 +586,7 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     connectedTotal,
     causeList,
     trend,
+    advocateStatusDistribution,
   };
 }
 
