@@ -321,7 +321,7 @@ def _compact_context(context: Dict[str, Any]) -> str:
     return json.dumps(compact, ensure_ascii=False)[:18000]
 
 
-def _make_payload(case_number: str, prompt_context: str, structured: bool) -> Dict[str, Any]:
+def _make_payload(case_number: str, prompt_context: str, structured: bool, reasoning_effort: Any = 'low') -> Dict[str, Any]:
     user_content = (
         'Analyse the following case and provide: executive summary, parties, case status, hearing analysis, legal observations, timeline summary, advocate action items, risk assessment, department impact, and recommended next steps. '
         'Also classify attention_required, no_activity, long_pending, and upcoming_hearing as booleans. '
@@ -330,11 +330,10 @@ def _make_payload(case_number: str, prompt_context: str, structured: bool) -> Di
         f'Context JSON:\n{prompt_context}'
     )
 
-    payload: Dict[str, Any] = {
+    base: Dict[str, Any] = {
         'model': SARVAM_MODEL,
         'temperature': 0.2,
-        'reasoning_effort': 'medium',
-        'max_tokens': 1400,
+        'max_tokens': 4000,
         'messages': [
             {
                 'role': 'system',
@@ -351,8 +350,11 @@ def _make_payload(case_number: str, prompt_context: str, structured: bool) -> Di
         ],
     }
 
+    if reasoning_effort is not None:
+        base['reasoning_effort'] = reasoning_effort
+
     if structured:
-        payload['response_format'] = {
+        base['response_format'] = {
             'type': 'json_schema',
             'json_schema': {
                 'name': 'case_ai_analysis',
@@ -362,8 +364,9 @@ def _make_payload(case_number: str, prompt_context: str, structured: bool) -> Di
             },
         }
     else:
-        payload['response_format'] = {'type': 'json_object'}
+        base['response_format'] = {'type': 'json_object'}
 
+    payload = base
     return payload
 
 
@@ -459,7 +462,8 @@ class handler(BaseHTTPRequestHandler):
             fallback_preview = ''
             fallback_detail = str(exc)
             try:
-                fallback_resp = _post_sarvam(headers, _make_payload(case_number, prompt_context[:12000], structured=False))
+                # Fallback: disable reasoning entirely so all tokens go to output
+                fallback_resp = _post_sarvam(headers, _make_payload(case_number, prompt_context[:12000], structured=False, reasoning_effort=None))
                 fallback_resp.raise_for_status()
                 fallback_result = fallback_resp.json()
                 analysis = _extract_analysis(fallback_result)
