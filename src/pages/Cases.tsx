@@ -841,6 +841,8 @@ export default function CasesPage() {
         caseId={caseDetailsId}
         open={caseDetailsOpen}
         onOpenChange={setCaseDetailsOpen}
+        allowSync
+        onSynced={load}
       />
     </div>
   );

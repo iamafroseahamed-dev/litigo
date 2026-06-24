@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { DownloadCloud, Loader2, RefreshCw } from 'lucide-react';
 import { getEcourtsCaseType } from '@/config/ecourtsCaseTypes';
 import { supabase } from '@/lib/supabase';
 
@@ -16,7 +18,9 @@ export interface EcourtsCaseData {
   registrationDate?: string | null;
   filingNumber?: string | null;
   filingDate?: string | null;
+  cnr?: string | null;
   caseStatus?: string | null;
+  natureOfDisposal?: string | null;
   courtName?: string | null;
   courtCode?: string | null;
   judicialSection?: string | null;
@@ -218,6 +222,28 @@ function num(value: number | null | undefined) {
   return typeof value === 'number' ? value : 0;
 }
 
+// Trimmed string or null (for nullable text columns)
+function strOrNull(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const s = String(value).trim();
+  return s ? s : null;
+}
+
+// Join an array of parties/advocates into a comma-separated string (or null)
+function joinList(items: Array<string | number> | null | undefined): string | null {
+  if (!items || items.length === 0) return null;
+  const s = items.map(x => String(x).trim()).filter(Boolean).join(', ');
+  return s || null;
+}
+
+// Normalise an eCourts date to YYYY-MM-DD (safe for date OR text columns), else null
+function toIsoDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h3 className="mb-3 border-b pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -264,11 +290,19 @@ interface CaseDetailsModalProps {
   caseId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Show the "Sync Case" button (Cases page only — cases is the master record). */
+  allowSync?: boolean;
+  /** Called after a successful sync so the host can refresh its table row. */
+  onSynced?: () => void;
 }
 
-export function CaseDetailsModal({ caseNumber, caseId, open, onOpenChange }: CaseDetailsModalProps) {
+export function CaseDetailsModal({
+  caseNumber, caseId, open, onOpenChange, allowSync = false, onSynced,
+}: CaseDetailsModalProps) {
+  const queryClient = useQueryClient();
   const [loadingApi, setLoadingApi] = useState(false);
   const [loadingCached, setLoadingCached] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [caseData, setCaseData] = useState<EcourtsCaseData | null>(null);
   const [source, setSource] = useState<CacheSource | null>(null);
@@ -336,6 +370,66 @@ export function CaseDetailsModal({ caseNumber, caseId, open, onOpenChange }: Cas
     }
   }, []);
 
+  // ── Sync Case: fetch fresh from eCourts and persist to the cases master record ──
+  const handleSync = useCallback(async () => {
+    const key = String(caseNumber ?? '').trim();
+    if (!key || !caseId) {
+      toast.error('Unable to synchronize case details.');
+      return;
+    }
+
+    setSyncing(true);
+    setError(null);
+    try {
+      // Step 1 — fresh case details from eCourts (bypasses all cache layers)
+      const entry = await fetchFromApi(key);
+      if (!entry) throw new Error('Case record not found.');
+
+      const cd = entry.data;
+
+      // Step 2 — map API response → cases columns and update only this record
+      const update: Record<string, unknown> = {
+        case_status: strOrNull(cd.caseStatus),
+        cnr_number: strOrNull(cd.cnr),
+        court_name: strOrNull(cd.courtName),
+        section: strOrNull(cd.judicialSection),
+        petitioner: joinList(cd.petitioners),
+        respondent: joinList(cd.respondents),
+        advocate_name: joinList(cd.petitionerAdvocates),
+        last_hearing_date: toIsoDate(cd.lastHearingDate),
+        next_hearing_date: toIsoDate(cd.nextHearingDate),
+        last_hearing_update:
+          `${strOrNull(cd.caseStatus) ?? '\u2014'}\nLast Hearing:\n${strOrNull(cd.lastHearingDate) ?? '\u2014'}\nNext Hearing:\n${strOrNull(cd.nextHearingDate) ?? '\u2014'}`,
+        case_details_json: cd,
+        case_details_synced_at: new Date(entry.fetchedAt).toISOString(),
+        ecourts_request_id: entry.requestId ?? null,
+      };
+      // Nature of disposal — only when the API provides it
+      const disposal = strOrNull(cd.natureOfDisposal);
+      if (disposal) update.nature_of_disposal = disposal;
+
+      const { error: updateError } = await supabase
+        .from('cases')
+        .update(update)
+        .eq('id', caseId);
+      if (updateError) throw updateError;
+
+      // Refresh caches + modal data without a page reload
+      caseDetailsCache.set(key, entry);
+      writeLocal(key, entry);
+      setCaseData(cd);
+      setSource('eCourts API');
+      await queryClient.invalidateQueries();
+      onSynced?.();
+
+      toast.success('Case synchronized successfully.');
+    } catch {
+      toast.error('Unable to synchronize case details.');
+    } finally {
+      setSyncing(false);
+    }
+  }, [caseNumber, caseId, queryClient, onSynced]);
+
   useEffect(() => {
     if (open && caseNumber) {
       load(caseNumber, caseId, false);
@@ -367,18 +461,41 @@ export function CaseDetailsModal({ caseNumber, caseId, open, onOpenChange }: Cas
             {import.meta.env.DEV && source && (
               <Badge variant="info" className="text-[10px]">Source: {source}</Badge>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto h-7 gap-1 text-xs"
-              disabled={loadingApi || loadingCached || !caseNumber}
-              onClick={() => caseNumber && load(caseNumber, caseId, true)}
-            >
-              <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh Case Details
-            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                disabled={loadingApi || loadingCached || syncing || !caseNumber}
+                onClick={() => caseNumber && load(caseNumber, caseId, true)}
+              >
+                <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+                Refresh Data
+              </Button>
+              {allowSync && caseId && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  disabled={syncing || loadingApi || loadingCached || !caseNumber}
+                  onClick={handleSync}
+                >
+                  {syncing
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <DownloadCloud className="h-3 w-3" />}
+                  {syncing ? 'Synchronizing...' : 'Sync Case'}
+                </Button>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
+
+        {syncing && (
+          <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Synchronizing case details...
+          </div>
+        )}
 
         {(loadingApi || loadingCached) && (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
