@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { AppFooter } from '@/components/AppFooter';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -97,6 +98,8 @@ export default function LoginPage() {
         <p className="text-center text-xs text-blue-300/60">
           Sign in with your organization credentials.
         </p>
+
+        <AppFooter variant="onDark" className="pt-1" />
       </div>
     </div>
   );

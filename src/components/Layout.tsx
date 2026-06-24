@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
+import { AppFooter } from '@/components/AppFooter';
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 
@@ -201,6 +202,7 @@ export function Layout() {
         <Header title={title} onMenuClick={() => setMobileSidebarOpen(true)} />
         <main className="flex-1 overflow-y-auto bg-gray-50 p-3 sm:p-4 lg:p-6">
           <Outlet />
+          <AppFooter className="mt-6 border-t pt-4" />
         </main>
       </div>
     </div>
