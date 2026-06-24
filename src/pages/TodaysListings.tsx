@@ -41,6 +41,16 @@ function normalizeJudgeName(value: string | null | undefined) {
 type SortField = 'listed_date' | 'court_hall' | 'item_number' | 'case_number';
 type SortDir   = 'asc' | 'desc';
 
+type RangeFilter = 'today' | '7d' | '30d' | '90d' | 'all';
+
+const RANGE_OPTIONS: { value: RangeFilter; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: '7d',    label: 'Last 7 days' },
+  { value: '30d',   label: 'Last 30 days' },
+  { value: '90d',   label: 'Last 90 days' },
+  { value: 'all',   label: 'All time' },
+];
+
 const PAGE_SIZE = 20;
 
 function NotifBadge({ status }: { status: string | null }) {
@@ -105,18 +115,29 @@ export default function TodaysListingsPage() {
 
   // ── Filters ──────────────────────────────────────────────────────────────────
   const todayUtc = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const [rangeFilter, setRangeFilter] = useState<RangeFilter>('today');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterJudge, setFilterJudge] = useState('');
   const [sortField, setSortField] = useState<SortField>('court_hall');
   const [sortDir,   setSortDir  ] = useState<SortDir>('asc');
   const [page, setPage]           = useState(1);
+
+  // Earliest listed_date to include for the selected range (null = no lower bound).
+  const rangeStart = useMemo(() => {
+    if (rangeFilter === 'all') return null;
+    if (rangeFilter === 'today') return todayUtc;
+    const days = rangeFilter === '7d' ? 6 : rangeFilter === '30d' ? 29 : 89;
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - days);
+    return d.toISOString().split('T')[0];
+  }, [rangeFilter, todayUtc]);
+
   // ── Data loading ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [{ data, error: sbErr }, { data: vcLinkData, error: vcLinkErr }] = await Promise.all([
-        supabase
+      let query = supabase
         .from('today_matched_listings')
         .select(`
           *,
@@ -124,8 +145,10 @@ export default function TodaysListingsPage() {
             id, cnr_number, case_number, district, section,
             cla_party_status, sensitivity, case_status
           )
-        `)
-        .eq('listed_date', todayUtc)
+        `);
+      query = rangeStart ? query.gte('listed_date', rangeStart) : query;
+      const [{ data, error: sbErr }, { data: vcLinkData, error: vcLinkErr }] = await Promise.all([
+        query
         .order('listed_date', { ascending: false })
         .order('court_hall',  { ascending: true  })
         .order('item_number', { ascending: true  }),
@@ -182,7 +205,7 @@ export default function TodaysListingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [todayUtc]);
+  }, [todayUtc, rangeStart]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -317,6 +340,15 @@ export default function TodaysListingsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-end gap-2">
+        <Select value={rangeFilter}
+          onValueChange={v => { setRangeFilter(v as RangeFilter); setPage(1); }}>
+          <SelectTrigger className="h-9 w-40 text-sm">
+            <SelectValue placeholder="Date range" />
+          </SelectTrigger>
+          <SelectContent>
+            {RANGE_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
         <Input value={searchQuery}
           onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
           placeholder="Search visible columns"
