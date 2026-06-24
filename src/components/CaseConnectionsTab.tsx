@@ -21,9 +21,10 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 export function CaseConnectionsTab({
-  caseId, onOpenCase, onCountChange,
+  caseId, orgId, onOpenCase, onCountChange,
 }: {
   caseId: string | null | undefined;
+  orgId?: string | null;
   onOpenCase?: (caseId: string, caseNumber: string | null) => void;
   onCountChange?: (count: number) => void;
 }) {
@@ -45,7 +46,7 @@ export function CaseConnectionsTab({
     setLoading(true);
     setError(false);
     try {
-      const data = await withTimeout(loadConnections(caseId), 10000);
+      const data = await withTimeout(loadConnections(caseId, orgId), 10000);
       console.log('[ConnectedCases] result count:', data.length, 'payload:', data);
       setRows(data);
       onCountChangeRef.current?.(data.length);
@@ -57,14 +58,14 @@ export function CaseConnectionsTab({
     } finally {
       setLoading(false);
     }
-  }, [caseId]);
+  }, [caseId, orgId]);
 
   useEffect(() => { load(); }, [load]);
 
   async function handleAdd(row: CaseSearchResult, relationship: string) {
     if (!caseId) return;
     try {
-      await addConnection(caseId, row.id, relationship);
+      await addConnection(caseId, row.id, relationship, orgId);
       toast.success(`Connected ${row.case_number ?? 'case'}.`);
       await load();
     } catch (e) {
@@ -157,6 +158,7 @@ export function CaseConnectionsTab({
         open={addOpen}
         onOpenChange={setAddOpen}
         excludeIds={[caseId, ...rows.map(r => r.case.id)]}
+        orgId={orgId}
         onAdd={handleAdd}
       />
     </div>

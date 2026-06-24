@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CaseDetailsModal } from '@/components/CaseDetailsModal';
+import { useOrg } from '@/lib/orgContext';
 import type { TodayMatchedListing } from '@/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -80,6 +81,8 @@ function SummaryCard({ title, value }: { title: string; value: number | string }
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function TodaysListingsPage() {
+  const { org } = useOrg();
+  const orgId = org?.id ?? null;
   const [loading, setLoading]             = useState(true);
   const [error,   setError]               = useState<string | null>(null);
   const [listings, setListings]           = useState<TodayMatchedListing[]>([]);
@@ -128,6 +131,7 @@ export default function TodaysListingsPage() {
             cla_party_status, sensitivity, case_status
           )
         `);
+      if (orgId) query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
       query = rangeStart ? query.gte('listed_date', rangeStart) : query;
       const [{ data, error: sbErr }, { data: vcLinkData, error: vcLinkErr }] = await Promise.all([
         query
@@ -187,7 +191,7 @@ export default function TodaysListingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [todayUtc, rangeStart]);
+  }, [todayUtc, rangeStart, orgId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

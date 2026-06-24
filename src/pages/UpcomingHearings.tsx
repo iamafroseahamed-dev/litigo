@@ -11,6 +11,7 @@ import { Scale, ListPlus } from 'lucide-react';
 import { CaseDetailsModal } from '@/components/CaseDetailsModal';
 import { TaskFormDialog } from '@/components/TaskFormDialog';
 import { HEARING_TASK_TEMPLATES } from '@/lib/caseManagement';
+import { useOrg } from '@/lib/orgContext';
 import type { Case } from '@/types';
 
 function isoToday(): string {
@@ -56,6 +57,8 @@ function HearingDateBadge({ iso }: { iso: string | null | undefined }) {
 
 export default function UpcomingHearingsPage() {
   const today = useMemo(() => isoToday(), []);
+  const { org } = useOrg();
+  const orgId = org?.id ?? null;
 
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsNumber, setDetailsNumber] = useState<string | null>(null);
@@ -68,13 +71,15 @@ export default function UpcomingHearingsPage() {
   const [taskHearingDate, setTaskHearingDate] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['upcoming-hearings', today],
+    queryKey: ['upcoming-hearings', today, orgId],
     queryFn: async (): Promise<Case[]> => {
-      const { data, error: sbErr } = await supabase
+      let query = supabase
         .from('cases')
         .select('*')
         .gte('next_hearing_date', today)
         .order('next_hearing_date', { ascending: true, nullsFirst: false });
+      if (orgId) query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
+      const { data, error: sbErr } = await query;
       if (sbErr) throw new Error(sbErr.message);
       return (data ?? []) as Case[];
     },

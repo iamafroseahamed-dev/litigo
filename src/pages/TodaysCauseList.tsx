@@ -10,6 +10,7 @@ import { Search, X, Download, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
 import { DEVELOPER_NAME, DEVELOPER_EMAIL } from '@/lib/appInfo';
+import { useOrg } from '@/lib/orgContext';
 
 interface DailyCauseListRecord {
   cause_date?: string | null;
@@ -33,7 +34,7 @@ type SortDir = 'asc' | 'desc';
 const COLS = 'cause_date,court_name,bench,court_hall,item_number,case_number,cnr_number,petitioner,respondent,party_names,judge_name,last_hearing_or_stage,counsel_name';
 const PAGE = 1000; // Supabase page size
 
-async function fetchFromSupabase(): Promise<DailyCauseListRecord[]> {
+async function fetchFromSupabase(orgId?: string | null): Promise<DailyCauseListRecord[]> {
   // 1. Find the most recent available cause_date
   const { data: dateRow, error: dateErr } = await supabase
     .from('daily_cause_list')
@@ -48,7 +49,43 @@ async function fetchFromSupabase(): Promise<DailyCauseListRecord[]> {
 
   const causeDate = dateRow.cause_date as string;
 
-  // 2. Fetch all rows for that date (paginated)
+  // 2. Organization-aware mapping via today_matched_listings -> daily_cause_list ids.
+  // If organization_id is not available yet (older schema), we gracefully fall
+  // back to the global cause list behavior below.
+  if (orgId) {
+    const mappedIds = new Set<string>();
+    const tml = await supabase
+      .from('today_matched_listings')
+      .select('daily_cause_list_id')
+      .eq('listed_date', causeDate)
+      .or(`organization_id.eq.${orgId},organization_id.is.null`)
+      .range(0, 49999);
+
+    if (!tml.error) {
+      (tml.data ?? []).forEach(r => {
+        const id = (r as { daily_cause_list_id: string | null }).daily_cause_list_id;
+        if (id) mappedIds.add(id);
+      });
+      if (mappedIds.size === 0) return [];
+
+      const mappedRows: DailyCauseListRecord[] = [];
+      const ids = Array.from(mappedIds);
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const chunk = ids.slice(i, i + PAGE);
+        const { data, error } = await supabase
+          .from('daily_cause_list')
+          .select(COLS)
+          .in('id', chunk)
+          .order('court_hall', { ascending: true })
+          .order('item_number', { ascending: true });
+        if (error) throw new Error(error.message);
+        mappedRows.push(...((data ?? []) as DailyCauseListRecord[]));
+      }
+      return mappedRows;
+    }
+  }
+
+  // 3. Global fallback: fetch all rows for that date (paginated)
   const allRows: DailyCauseListRecord[] = [];
   let offset = 0;
   while (true) {
@@ -73,6 +110,8 @@ async function fetchFromSupabase(): Promise<DailyCauseListRecord[]> {
 }
 
 export default function CauseListPage() {
+  const { org } = useOrg();
+  const orgId = org?.id ?? null;
   const today = new Date().toISOString().split('T')[0];
 
   const [records, setRecords] = useState<DailyCauseListRecord[]>([]);
@@ -91,14 +130,14 @@ export default function CauseListPage() {
     setError(null);
     setLoading(true);
     try {
-      const rows = await fetchFromSupabase();
+      const rows = await fetchFromSupabase(orgId);
       setRecords(rows);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
     }
     setLoading(false);
-  }, []);
+  }, [orgId]);
 
   useEffect(() => {
     loadData();

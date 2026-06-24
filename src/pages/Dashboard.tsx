@@ -11,6 +11,7 @@ import { fetchExecutiveAnalytics } from '@/lib/dashboardQueries';
 import { TNDistrictMap } from '@/components/TNDistrictMap';
 import { DistrictDrawer } from '@/components/DistrictDrawer';
 import { advocateStatusClasses } from '@/lib/caseManagement';
+import { useOrg } from '@/lib/orgContext';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,7 +79,11 @@ function StatCard({ label, value, accent, loading }: { label: string; value: num
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const exec = useQuery({ queryKey: ['executive-analytics'], queryFn: fetchExecutiveAnalytics });
+  const { org } = useOrg();
+  const exec = useQuery({
+    queryKey: ['executive-analytics', org?.id ?? null],
+    queryFn: () => fetchExecutiveAnalytics(org?.id ?? null),
+  });
 
   const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null);
 

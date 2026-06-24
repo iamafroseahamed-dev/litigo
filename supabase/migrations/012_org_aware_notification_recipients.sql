@@ -109,6 +109,10 @@ CREATE POLICY "recipients_update"
   USING (
     is_super_admin()
     OR organization_id = get_my_organization_id()
+  )
+  WITH CHECK (
+    is_super_admin()
+    OR organization_id = get_my_organization_id()
   );
 
 -- DELETE ─────────────────────────────────────────────────────────────────────

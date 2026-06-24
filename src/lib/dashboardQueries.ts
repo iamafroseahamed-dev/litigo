@@ -291,24 +291,44 @@ function topN(map: Map<string, number>, n: number): CategoryCount[] {
     .slice(0, n);
 }
 
-export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
-  const [casesRes, tasksRes, listingsRes, connRes] = await Promise.all([
-    supabase.from('cases')
-      .select('id, case_number, district, section, case_status, advocate_status, next_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, created_at')
-      .range(0, PAGE),
-    supabase.from('case_tasks')
-      .select('id, case_id, task_title, task_status, due_date, assigned_to_name, created_at, completed_at')
-      .range(0, PAGE),
-    supabase.from('today_matched_listings')
-      .select('court_hall, judge_name, listed_date')
-      .range(0, PAGE),
-    supabase.from('case_connections').select('id').range(0, PAGE),
+function orgOrLegacyFilter(orgId?: string | null): string | null {
+  if (!orgId) return null;
+  return `organization_id.eq.${orgId},organization_id.is.null`;
+}
+
+export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<ExecutiveAnalytics> {
+  let casesQuery = supabase.from('cases')
+    .select('id, case_number, district, section, case_status, advocate_status, next_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, created_at, organization_id')
+    .range(0, PAGE);
+  const scopedFilter = orgOrLegacyFilter(orgId);
+  if (scopedFilter) casesQuery = casesQuery.or(scopedFilter);
+
+  const [casesRes, listingsRes, connRes] = await Promise.all([
+    casesQuery,
+    (() => {
+      let q = supabase.from('today_matched_listings')
+        .select('court_hall, judge_name, listed_date, organization_id')
+        .range(0, PAGE);
+      if (scopedFilter) q = q.or(scopedFilter);
+      return q;
+    })(),
+    supabase.from('case_connections').select('parent_case_id, connected_case_id').range(0, PAGE),
   ]);
 
   const cases = (casesRes.data ?? []) as CaseRow[];
-  const tasks = (tasksRes.data ?? []) as TaskRow[];
   const listings = (listingsRes.data ?? []) as ListingRow[];
-  const connectedTotal = connRes.error ? 0 : (connRes.data ?? []).length;
+  const caseIds = new Set(cases.map(c => c.id));
+
+  const tasks = caseIds.size === 0
+    ? []
+    : ((await supabase.from('case_tasks')
+      .select('id, case_id, task_title, task_status, due_date, assigned_to_name, created_at, completed_at')
+      .in('case_id', Array.from(caseIds))
+      .range(0, PAGE)).data ?? []) as TaskRow[];
+
+  const connectedTotal = connRes.error
+    ? 0
+    : (connRes.data ?? []).filter(r => caseIds.has(r.parent_case_id as string) || caseIds.has(r.connected_case_id as string)).length;
 
   const now = new Date();
   const today = localIso(now);

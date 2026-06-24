@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -24,11 +24,12 @@ const PAGE_SIZE = 8;
  * The host decides what `onAdd` does (insert a connection, or push to a draft).
  */
 export function AddConnectionDialog({
-  open, onOpenChange, excludeIds, onAdd,
+  open, onOpenChange, excludeIds, orgId, onAdd,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   excludeIds: string[];
+  orgId?: string | null;
   onAdd: (caseRow: CaseSearchResult, relationshipType: string) => void | Promise<void>;
 }) {
   const [relationship, setRelationship] = useState<string>('Connected');
@@ -42,8 +43,6 @@ export function AddConnectionDialog({
   // contents (a stable string) instead of its reference — otherwise the search
   // effect re-runs on every re-render and the spinner never resolves.
   const excludeKey = useMemo(() => excludeIds.join('|'), [excludeIds]);
-  const excludeRef = useRef(excludeIds);
-  excludeRef.current = excludeIds;
 
   useEffect(() => {
     if (!open) { setQuery(''); setResults([]); setRelationship('Connected'); setPage(1); }
@@ -55,7 +54,7 @@ export function AddConnectionDialog({
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        const rows = await searchCases(query, excludeRef.current);
+        const rows = await searchCases(query, excludeIds, 50, orgId);
         if (!cancelled) { setResults(rows); setPage(1); }
       } catch (e) {
         if (!cancelled) toast.error(e instanceof Error ? e.message : 'Search failed.');
@@ -64,7 +63,7 @@ export function AddConnectionDialog({
       }
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [query, open, excludeKey]);
+  }, [query, open, excludeKey, orgId]);
 
   const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
   const pageRows = useMemo(

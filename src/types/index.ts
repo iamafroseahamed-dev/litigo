@@ -388,6 +388,7 @@ export type EmailNotificationStatus = 'Pending' | 'Sent' | 'Failed' | 'Skipped';
 
 export interface Advocate {
   id: string;
+  organization_id?: string | null;
   advocate_name: string;
   email: string | null;
   mobile: string | null;

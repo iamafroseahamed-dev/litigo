@@ -374,18 +374,19 @@ export function CaseDetailsModal({
   const [tab, setTab] = useState(initialTab);
   const [summary, setSummary] = useState<{ connections: number; openTasks: number; notes: number } | null>(null);
   const [viewCase, setViewCase] = useState<{ id: string; number: string | null } | null>(null);
-  const [internal, setInternal] = useState<{ courtStatus: string | null; advocateStatus: string | null } | null>(null);
+  const [internal, setInternal] = useState<{ courtStatus: string | null; advocateStatus: string | null; organizationId: string | null } | null>(null);
   const [statusHistory, setStatusHistory] = useState<CaseStatusHistory[]>([]);
 
   const loadInternalStatus = useCallback(async (id: string) => {
     try {
       const [caseRes, histRes] = await Promise.all([
-        supabase.from('cases').select('case_status, advocate_status').eq('id', id).maybeSingle(),
+        supabase.from('cases').select('case_status, advocate_status, organization_id').eq('id', id).maybeSingle(),
         supabase.from('case_status_history').select('*').eq('case_id', id).order('changed_at', { ascending: false }),
       ]);
       setInternal({
         courtStatus: (caseRes.data?.case_status as string | null) ?? null,
         advocateStatus: (caseRes.data?.advocate_status as string | null) ?? null,
+        organizationId: (caseRes.data?.organization_id as string | null) ?? null,
       });
       setStatusHistory(histRes.error ? [] : ((histRes.data ?? []) as CaseStatusHistory[]));
     } catch {
@@ -575,6 +576,7 @@ export function CaseDetailsModal({
       // Record the paid eCourts flow (CASE_SEARCH → CASE_DETAIL) and deduct credits.
       recordApiUsage({ organizationId: syncOrgId, caseId, endpoint: 'CASE_SEARCH', requestId: entry.requestId, cnr: key });
       recordApiUsage({ organizationId: syncOrgId, caseId, endpoint: 'CASE_DETAIL', requestId: entry.requestId, cnr: key });
+      recordApiUsage({ organizationId: syncOrgId, caseId, endpoint: 'CASE_REFRESH', requestId: entry.requestId, cnr: key });
 
       // Verification re-fetch — confirms the record still exists & is visible.
       const { data: verifyRow, error: verifyError } = await supabase
@@ -850,6 +852,7 @@ export function CaseDetailsModal({
           <TabsContent value="connected">
             <CaseConnectionsTab
               caseId={caseId}
+              orgId={internal?.organizationId ?? null}
               onOpenCase={(id, number) => setViewCase({ id, number })}
               onCountChange={n => setSummary(s => (s && s.connections !== n ? { ...s, connections: n } : s))}
             />

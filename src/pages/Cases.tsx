@@ -123,8 +123,8 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-function CaseForm({ initial, advocates, onSave, onCancel, saving }: {
-  initial: FormData; advocates: Advocate[]; onSave: (d: FormData, extras: CaseFormExtras) => void; onCancel: () => void; saving: boolean;
+function CaseForm({ initial, advocates, orgId, onSave, onCancel, saving }: {
+  initial: FormData; advocates: Advocate[]; orgId?: string | null; onSave: (d: FormData, extras: CaseFormExtras) => void; onCancel: () => void; saving: boolean;
 }) {
   const [form, setForm] = useState<FormData>(initial);
   const [notes, setNotes] = useState<string[]>([]);
@@ -386,6 +386,7 @@ function CaseForm({ initial, advocates, onSave, onCancel, saving }: {
           open={connOpen}
           onOpenChange={setConnOpen}
           excludeIds={connections.map(c => c.case.id)}
+          orgId={orgId}
           onAdd={(row, relationship) => {
             setConnections(p => p.some(c => c.case.id === row.id) ? p : [...p, { case: row, relationship_type: relationship }]);
           }}
@@ -464,8 +465,8 @@ export default function CasesPage() {
   const createdBy = user?.profile?.full_name || user?.email || 'Unknown';
 
   const loadConnCounts = useCallback(async () => {
-    try { setConnCounts(await loadConnectionCounts()); } catch { /* table may not exist yet */ }
-  }, []);
+    try { setConnCounts(await loadConnectionCounts(orgId)); } catch { /* table may not exist yet */ }
+  }, [orgId]);
   useEffect(() => { loadConnCounts(); }, [loadConnCounts]);
 
   const load = useCallback(async () => {
@@ -486,13 +487,33 @@ export default function CasesPage() {
 
   // Advocate master for the assignment + task dropdowns
   useEffect(() => {
-    supabase
-      .from('advocates')
-      .select('id, advocate_name, email, mobile, designation, active, created_at')
-      .eq('active', true)
-      .order('advocate_name', { ascending: true })
-      .then(({ data }) => setAdvocates((data ?? []) as Advocate[]));
-  }, []);
+    let active = true;
+    async function loadAdvocates() {
+      let query = supabase
+        .from('advocates')
+        .select('id, organization_id, advocate_name, email, mobile, designation, active, created_at')
+        .eq('active', true)
+        .order('advocate_name', { ascending: true });
+
+      if (orgId) query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
+      const { data, error } = await query;
+
+      // Backward compatibility for environments where advocates.organization_id does not exist yet.
+      if (error?.message?.toLowerCase().includes('organization_id')) {
+        const fallback = await supabase
+          .from('advocates')
+          .select('id, advocate_name, email, mobile, designation, active, created_at')
+          .eq('active', true)
+          .order('advocate_name', { ascending: true });
+        if (active) setAdvocates((fallback.data ?? []) as Advocate[]);
+        return;
+      }
+
+      if (active) setAdvocates((data ?? []) as Advocate[]);
+    }
+    loadAdvocates();
+    return () => { active = false; };
+  }, [orgId]);
 
   // Per-case open / overdue task counts
   const loadTaskCounts = useCallback(async () => {
@@ -615,7 +636,7 @@ export default function CasesPage() {
     try {
       let caseId: string;
       if (dialogMode === 'add') {
-        const payload: Record<string, unknown> = { ...data, created_at: now, updated_at: now };
+        const payload: Record<string, unknown> = { ...data, created_at: now, updated_at: now, organization_id: orgId };
         if (data.assigned_advocate_name) payload.assigned_on = now;
         const { data: inserted, error: err } = await supabase.from('cases')
           .insert(payload).select('id').single();
@@ -658,7 +679,7 @@ export default function CasesPage() {
         );
       }
       for (const c of extras.connections) {
-        try { await addConnection(caseId, c.case.id, c.relationship_type); }
+        try { await addConnection(caseId, c.case.id, c.relationship_type, orgId); }
         catch (e) { toast.error(e instanceof Error ? e.message : 'A connection could not be saved.'); }
       }
 
@@ -1062,6 +1083,7 @@ export default function CasesPage() {
           <CaseForm
             initial={dialogMode === 'edit' && selected ? { ...selected } as FormData : EMPTY_FORM}
             advocates={advocates}
+            orgId={orgId}
             onSave={handleSave}
             onCancel={() => setDialogMode(null)}
             saving={saving}
