@@ -26,6 +26,7 @@ import { TaskFormDialog } from '@/components/TaskFormDialog';
 import { AddConnectionDialog } from '@/components/AddConnectionDialog';
 import { addConnection, loadConnectionCounts, type CaseSearchResult } from '@/lib/connections';
 import { ADVOCATE_STATUSES, advocateStatusClasses, advocateStatusShort } from '@/lib/caseManagement';
+import { DEVELOPER_NAME, DEVELOPER_EMAIL } from '@/lib/appInfo';
 import { useAuth } from '@/lib/auth';
 import type { Case, Advocate } from '@/types';
 

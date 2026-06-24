@@ -516,7 +516,10 @@ def _build_messages(match: Dict, recipient_name: str) -> Tuple[str, str, str, st
         f'Respondent: {resp}\n'
         f'Stage: {stage}\n\n'
         f'Please login to Adalat360 for complete details.\n\n'
-        f'Regards,\nAdalat360'
+        f'Regards,\nAdalat360\n\n'
+        f'\u2014\n'
+        f'Developed by Afrose Ahamed\n'
+        f'iamafroseahamed@gmail.com'
     )
     sms_body = (
         f'Adalat360 Alert\n'

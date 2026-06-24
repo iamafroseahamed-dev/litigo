@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Search, X, Download, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
+import { DEVELOPER_NAME, DEVELOPER_EMAIL } from '@/lib/appInfo';
 
 interface DailyCauseListRecord {
   cause_date?: string | null;
@@ -207,6 +208,11 @@ export default function CauseListPage() {
                 const ws = XLSX.utils.json_to_sheet(rows);
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, 'Cause List');
+                XLSX.utils.sheet_add_aoa(ws, [
+                  [],
+                  [`Developed by ${DEVELOPER_NAME}`],
+                  [DEVELOPER_EMAIL],
+                ], { origin: -1 });
                 XLSX.writeFile(wb, `cause_list_${today}.xlsx`);
               }}
             >
