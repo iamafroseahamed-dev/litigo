@@ -7,7 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { MapPin, Plus, Minus, RotateCcw } from 'lucide-react';
-import type { DistrictLitigation, DistrictDetail } from '@/lib/dashboardQueries';
+import type { DistrictLitigation } from '@/lib/dashboardQueries';
 
 // Register only the ECharts modules we use (tree-shakeable core build).
 echarts.use([MapChart, TooltipComponent, VisualMapComponent, CanvasRenderer]);
@@ -56,17 +56,12 @@ function canon(s: string): string {
 interface DistrictDatum {
   name: string;
   value: number;        // total cases — drives the colour scale
-  pending: number;
-  disposed: number;
-  openTasks: number;
-  advocates: number;
 }
 
 export function TNDistrictMap({
-  districts, details, selected, onSelect, loading,
+  districts, selected, onSelect, loading,
 }: {
   districts: DistrictLitigation[];
-  details: Record<string, DistrictDetail>;
   selected: string | null;
   onSelect: (district: string) => void;
   loading: boolean;
@@ -96,8 +91,8 @@ export function TNDistrictMap({
     return () => { active = false; };
   }, []);
 
-  // Merge case data onto every GeoJSON district by canonical name so colours and
-  // tooltips always line up with the boundary, even with spelling variants.
+  // Merge case totals onto every GeoJSON district by canonical name so colours
+  // line up with the boundary even with spelling variants.
   const { data, max } = useMemo(() => {
     const litByCanon = new Map<string, DistrictLitigation>();
     let max = 0;
@@ -105,24 +100,12 @@ export function TNDistrictMap({
       litByCanon.set(canon(d.district), d);
       if (d.total > max) max = d.total;
     }
-    const detByCanon = new Map<string, DistrictDetail>();
-    for (const k of Object.keys(details)) detByCanon.set(canon(k), details[k]);
-
-    const data: DistrictDatum[] = geoNames.map(name => {
-      const key = canon(name);
-      const lit = litByCanon.get(key);
-      const det = detByCanon.get(key);
-      return {
-        name,
-        value: lit?.total ?? 0,
-        pending: lit?.pending ?? 0,
-        disposed: lit?.disposed ?? 0,
-        openTasks: det?.openTasks ?? 0,
-        advocates: det?.advocates ?? 0,
-      };
-    });
+    const data: DistrictDatum[] = geoNames.map(name => ({
+      name,
+      value: litByCanon.get(canon(name))?.total ?? 0,
+    }));
     return { data, max };
-  }, [districts, details, geoNames]);
+  }, [districts, geoNames]);
 
   const selectedName = useMemo(() => {
     if (!selected) return null;
@@ -137,18 +120,12 @@ export function TNDistrictMap({
       borderColor: '#0f172a',
       textStyle: { color: '#fff', fontSize: 12 },
       formatter: (p: { name: string; data?: DistrictDatum }) => {
-        const d = p.data;
-        const row = (label: string, val: number) =>
-          `<div style="display:flex;justify-content:space-between;gap:18px"><span>${label}</span><b>${val}</b></div>`;
+        const v = p.data?.value ?? 0;
         return (
-          `<div style="min-width:184px">` +
-          `<div style="font-weight:700;margin-bottom:4px">${p.name}</div>` +
-          row('Total Cases', d?.value ?? 0) +
-          row('Pending', d?.pending ?? 0) +
-          row('Disposed', d?.disposed ?? 0) +
-          row('Open Tasks', d?.openTasks ?? 0) +
-          row('Assigned Advocates', d?.advocates ?? 0) +
-          `<div style="margin-top:4px;opacity:.7;font-size:11px">${(d?.value ?? 0) > 0 ? 'Click to drill down' : 'No recorded cases'}</div>` +
+          `<div style="min-width:140px">` +
+          `<div style="font-weight:700;margin-bottom:2px">${p.name}</div>` +
+          `<div style="display:flex;justify-content:space-between;gap:18px"><span>Total Cases</span><b>${v}</b></div>` +
+          `<div style="margin-top:3px;opacity:.7;font-size:11px">${v > 0 ? 'Click for full analytics' : 'No recorded cases'}</div>` +
           `</div>`
         );
       },
@@ -183,8 +160,8 @@ export function TNDistrictMap({
         itemStyle: { borderColor: '#1d4ed8', borderWidth: 1.4 },
       },
       select: {
-        label: { show: true, fontSize: 10 },
-        itemStyle: { borderColor: '#1d4ed8', borderWidth: 1.8 },
+        label: { show: true, fontSize: 10, fontWeight: 'bold' as const },
+        itemStyle: { borderColor: '#1d4ed8', borderWidth: 2.4, shadowBlur: 12, shadowColor: 'rgba(37,99,235,0.9)' },
       },
       data: data.map(d => (selectedName && d.name === selectedName ? { ...d, selected: true } : d)),
     }],

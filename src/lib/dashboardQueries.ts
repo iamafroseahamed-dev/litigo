@@ -144,6 +144,8 @@ export interface DistrictDetail {
   total: number;
   pending: number;
   disposed: number;
+  active: number;
+  sensitive: number;
   upcomingHearings: number;
   advocates: number;
   openTasks: number;
@@ -151,6 +153,12 @@ export interface DistrictDetail {
   readyForHearing: number;
   counterPending: number;
   documentsAwaited: number;
+  compliancePending: number;
+  advocateBreakdown: { advocate: string; cases: number }[];
+  sectionBreakdown: { section: string; cases: number }[];
+  upcomingHearingsList: { caseNumber: string | null; hearingDate: string | null; advocateStatus: string | null }[];
+  priorityCases: { caseNumber: string | null; advocateStatus: string | null }[];
+  caseList: { caseNumber: string | null; status: string | null; advocateStatus: string | null; sensitive: boolean }[];
 }
 
 export interface AdvocatePerformance {
@@ -361,6 +369,20 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   const districtReady = new Map<string, number>();
   const districtCounter = new Map<string, number>();
   const districtDocs = new Map<string, number>();
+  const districtCompliance = new Map<string, number>();
+  const districtActive = new Map<string, number>();
+  const districtSensitiveM = new Map<string, number>();
+  const districtAdvBreakdown = new Map<string, Map<string, number>>();
+  const districtSecBreakdown = new Map<string, Map<string, number>>();
+  const districtPriority = new Map<string, { caseNumber: string | null; advocateStatus: string | null }[]>();
+  const districtCaseList = new Map<string, { caseNumber: string | null; status: string | null; advocateStatus: string | null; sensitive: boolean }[]>();
+  const incM = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+  const incNested = (m: Map<string, Map<string, number>>, k: string, sub: string) => {
+    let inner = m.get(k);
+    if (!inner) { inner = new Map(); m.set(k, inner); }
+    inner.set(sub, (inner.get(sub) ?? 0) + 1);
+  };
+  const PRIORITY_STATUSES = new Set(['Counter Affidavit Pending', 'Documents Awaited', 'Order Compliance Pending', 'Ready For Hearing']);
   for (const c of cases) {
     const key = (c.district ?? '').trim() || 'Unspecified';
     let d = districtMap.get(key);
@@ -368,13 +390,33 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     d.total += 1;
     if (isPending(c.case_status)) d.pending += 1;
     if (isDisposed(c.case_status)) d.disposed += 1;
-    if (isReadyForHearing(c)) districtReady.set(key, (districtReady.get(key) ?? 0) + 1);
-    if (isCounterPending(c)) districtCounter.set(key, (districtCounter.get(key) ?? 0) + 1);
-    if (isDocumentsAwaited(c)) districtDocs.set(key, (districtDocs.get(key) ?? 0) + 1);
+    if (isActive(c.case_status)) incM(districtActive, key);
+    if (isSensitive(c)) incM(districtSensitiveM, key);
+    if (isReadyForHearing(c)) incM(districtReady, key);
+    if (isCounterPending(c)) incM(districtCounter, key);
+    if (isDocumentsAwaited(c)) incM(districtDocs, key);
+    if (isCompliancePending(c)) incM(districtCompliance, key);
+    const advName = (c.assigned_advocate_name ?? '').trim();
+    if (advName) incNested(districtAdvBreakdown, key, advName);
+    incNested(districtSecBreakdown, key, (c.section ?? '').trim() || 'Unspecified');
+    const aStatus = (c.advocate_status ?? '').trim();
+    if (aStatus && PRIORITY_STATUSES.has(aStatus)) {
+      if (!districtPriority.has(key)) districtPriority.set(key, []);
+      const list = districtPriority.get(key)!;
+      if (list.length < 50) list.push({ caseNumber: c.case_number, advocateStatus: c.advocate_status });
+    }
+    if (!districtCaseList.has(key)) districtCaseList.set(key, []);
+    districtCaseList.get(key)!.push({
+      caseNumber: c.case_number,
+      status: c.case_status,
+      advocateStatus: c.advocate_status,
+      sensitive: isSensitive(c),
+    });
   }
-  // District details (advocates / hearings / tasks)
+  // District details (distinct advocates / upcoming hearings count + list / tasks)
   const districtAdvocates = new Map<string, Set<string>>();
   const districtUpcoming = new Map<string, number>();
+  const districtUpcomingList = new Map<string, { caseNumber: string | null; hearingDate: string | null; advocateStatus: string | null; _d: string }[]>();
   for (const c of cases) {
     const key = (c.district ?? '').trim() || 'Unspecified';
     if (c.assigned_advocate_name) {
@@ -382,7 +424,12 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
       districtAdvocates.get(key)!.add(c.assigned_advocate_name);
     }
     if (c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30) {
-      districtUpcoming.set(key, (districtUpcoming.get(key) ?? 0) + 1);
+      incM(districtUpcoming, key);
+      if (!districtUpcomingList.has(key)) districtUpcomingList.set(key, []);
+      districtUpcomingList.get(key)!.push({
+        caseNumber: c.case_number, hearingDate: c.next_hearing_date,
+        advocateStatus: c.advocate_status, _d: String(c.next_hearing_date),
+      });
     }
   }
   const districtOpenTasks = new Map<string, number>();
@@ -390,15 +437,21 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
   for (const t of tasks) {
     const c = caseById.get(t.case_id);
     const key = (c?.district ?? '').trim() || 'Unspecified';
-    if (taskOpen(t)) districtOpenTasks.set(key, (districtOpenTasks.get(key) ?? 0) + 1);
-    if (taskOverdue(t)) districtOverdueTasks.set(key, (districtOverdueTasks.get(key) ?? 0) + 1);
+    if (taskOpen(t)) incM(districtOpenTasks, key);
+    if (taskOverdue(t)) incM(districtOverdueTasks, key);
   }
   districtMap.forEach((d, key) => {
+    const upList = (districtUpcomingList.get(key) ?? [])
+      .sort((a, b) => a._d.localeCompare(b._d))
+      .slice(0, 10)
+      .map(({ caseNumber, hearingDate, advocateStatus }) => ({ caseNumber, hearingDate, advocateStatus }));
     districtDetails[key] = {
       district: key,
       total: d.total,
       pending: d.pending,
       disposed: d.disposed,
+      active: districtActive.get(key) ?? 0,
+      sensitive: districtSensitiveM.get(key) ?? 0,
       upcomingHearings: districtUpcoming.get(key) ?? 0,
       advocates: districtAdvocates.get(key)?.size ?? 0,
       openTasks: districtOpenTasks.get(key) ?? 0,
@@ -406,6 +459,16 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
       readyForHearing: districtReady.get(key) ?? 0,
       counterPending: districtCounter.get(key) ?? 0,
       documentsAwaited: districtDocs.get(key) ?? 0,
+      compliancePending: districtCompliance.get(key) ?? 0,
+      advocateBreakdown: Array.from(districtAdvBreakdown.get(key)?.entries() ?? [])
+        .map(([advocate, cases]) => ({ advocate, cases }))
+        .sort((a, b) => b.cases - a.cases),
+      sectionBreakdown: Array.from(districtSecBreakdown.get(key)?.entries() ?? [])
+        .map(([section, cases]) => ({ section, cases }))
+        .sort((a, b) => b.cases - a.cases),
+      upcomingHearingsList: upList,
+      priorityCases: districtPriority.get(key) ?? [],
+      caseList: districtCaseList.get(key) ?? [],
     };
   });
   const districts = Array.from(districtMap.values()).sort((a, b) => b.total - a.total);

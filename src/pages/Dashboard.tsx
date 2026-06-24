@@ -5,10 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Briefcase, Clock, CheckCircle2, Gavel, ShieldAlert, Landmark,
-  MapPin, Users, Layers, CalendarClock, AlertTriangle, Scale,
+  Users, Layers, CalendarClock, AlertTriangle, Scale,
 } from 'lucide-react';
 import { fetchExecutiveAnalytics } from '@/lib/dashboardQueries';
 import { TNDistrictMap } from '@/components/TNDistrictMap';
+import { DistrictDrawer } from '@/components/DistrictDrawer';
 import { advocateStatusClasses } from '@/lib/caseManagement';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -58,15 +59,6 @@ function KpiCard({
     );
   }
   return body;
-}
-
-function DrillMetric({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="rounded-md border px-3 py-2">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className={`text-xl font-bold ${color}`}>{value.toLocaleString('en-IN')}</p>
-    </div>
-  );
 }
 
 function StatCard({ label, value, accent, loading }: { label: string; value: number; accent: string; loading: boolean }) {
@@ -122,46 +114,20 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Tamil Nadu Litigation Heat Map + District drill-down */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <TNDistrictMap
-            districts={a?.districts ?? []}
-            details={a?.districtDetails ?? {}}
-            selected={selectedDistrict}
-            onSelect={(d) => setSelectedDistrict(d === selectedDistrict ? null : d)}
-            loading={exec.isLoading}
-          />
-        </div>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <MapPin className="h-4 w-4 text-blue-600" /> District Drill-Down
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {selectedDistrict ? selectedDistrict : 'Select a district on the heat map'}
-            </p>
-          </CardHeader>
-          <CardContent>
-            {!drill ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">No district selected.</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <DrillMetric label="Total Cases"       value={drill.total}            color="text-slate-700" />
-                <DrillMetric label="Pending"           value={drill.pending}          color="text-amber-600" />
-                <DrillMetric label="Disposed"          value={drill.disposed}         color="text-emerald-600" />
-                <DrillMetric label="Ready For Hearing" value={drill.readyForHearing}  color="text-emerald-600" />
-                <DrillMetric label="Counter Pending"   value={drill.counterPending}   color="text-amber-600" />
-                <DrillMetric label="Documents Awaited" value={drill.documentsAwaited} color="text-orange-600" />
-                <DrillMetric label="Upcoming Hearings" value={drill.upcomingHearings} color="text-indigo-600" />
-                <DrillMetric label="Advocates"         value={drill.advocates}        color="text-blue-600" />
-                <DrillMetric label="Open Tasks"        value={drill.openTasks}        color="text-slate-700" />
-                <DrillMetric label="Overdue Tasks"     value={drill.overdueTasks}     color="text-red-600" />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {/* Tamil Nadu Litigation Heat Map — click a district for full analytics */}
+      <TNDistrictMap
+        districts={a?.districts ?? []}
+        selected={selectedDistrict}
+        onSelect={(d) => setSelectedDistrict(d)}
+        loading={exec.isLoading}
+      />
+
+      <DistrictDrawer
+        district={selectedDistrict}
+        detail={drill}
+        open={!!selectedDistrict}
+        onClose={() => setSelectedDistrict(null)}
+      />
 
       {/* Advocate Performance (case-level) */}
       <Card>
