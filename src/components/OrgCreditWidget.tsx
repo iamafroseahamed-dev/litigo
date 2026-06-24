@@ -5,11 +5,9 @@ import { useOrg } from '@/lib/orgContext';
 import {
   fetchUsageForOrg, fetchPricing, summarizeUsage, type OrgUsageSummary,
 } from '@/lib/organizations';
-import type { EcourtsApiPricing } from '@/types';
 
-function fmtCredits(v: number | null | undefined): string {
-  const n = Number(v ?? 0);
-  return Number.isInteger(n) ? n.toLocaleString('en-IN') : n.toFixed(1);
+function fmtMoney(v: number | null | undefined): string {
+  return `₹${Number(v ?? 0).toFixed(2)}`;
 }
 
 /**
@@ -21,7 +19,6 @@ export function OrgCreditWidget() {
   const { org } = useOrg();
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState<OrgUsageSummary | null>(null);
-  const [pricing, setPricing] = useState<EcourtsApiPricing[]>([]);
   const [loadingUsage, setLoadingUsage] = useState(false);
 
   useEffect(() => {
@@ -31,7 +28,6 @@ export function OrgCreditWidget() {
     Promise.all([fetchUsageForOrg(org.id), fetchPricing()])
       .then(([rows, price]) => {
         if (!active) return;
-        setPricing(price);
         setSummary(summarizeUsage(rows, price));
       })
       .finally(() => { if (active) setLoadingUsage(false); });
@@ -62,7 +58,7 @@ export function OrgCreditWidget() {
         <span className="hidden min-w-0 leading-tight sm:block">
           <span className="block max-w-[180px] truncate text-xs font-semibold">{org.organization_name}</span>
           <span className="block text-[11px] text-muted-foreground">
-            {(org.plan_name ?? 'Trial')} Plan · <span className={credits <= 0 ? 'font-semibold text-red-600' : 'font-semibold text-emerald-600'}>{fmtCredits(credits)} Credits</span>
+            {(org.plan_name ?? 'Trial')} Plan · <span className={credits <= 0 ? 'font-semibold text-red-600' : 'font-semibold text-emerald-600'}>{fmtMoney(credits)} Balance</span>
           </span>
         </span>
       </button>
@@ -93,10 +89,10 @@ export function OrgCreditWidget() {
                 {org.contact_email && <Detail label="Email" value={org.contact_email} />}
               </div>
 
-              {/* Credits */}
+              {/* Balance */}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <Metric icon={CreditCard} label="Available Credits" value={fmtCredits(credits)} accent={credits <= 0 ? 'text-red-600' : 'text-emerald-600'} />
-                <Metric icon={Activity} label="Credits Consumed" value={summary ? fmtCredits(summary.creditsConsumed) : '…'} />
+                <Metric icon={CreditCard} label="Balance (₹)" value={fmtMoney(credits)} accent={credits <= 0 ? 'text-red-600' : 'text-emerald-600'} />
+                <Metric icon={Activity} label="Amount Charged (₹)" value={summary ? fmtMoney(summary.amountCharged) : '…'} />
                 <Metric icon={Activity} label="API Calls" value={summary ? summary.apiCalls.toLocaleString('en-IN') : '…'} />
               </div>
 
@@ -114,7 +110,8 @@ export function OrgCreditWidget() {
                         <tr className="border-b text-left text-xs text-muted-foreground">
                           <th className="px-3 py-2 font-medium">Endpoint</th>
                           <th className="px-3 py-2 text-right font-medium">Calls</th>
-                          <th className="px-3 py-2 text-right font-medium">Credits Used</th>
+                          <th className="px-3 py-2 text-right font-medium">Rate Applied</th>
+                          <th className="px-3 py-2 text-right font-medium">Amount Charged</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -122,16 +119,17 @@ export function OrgCreditWidget() {
                           <tr key={e.endpoint} className="border-b last:border-0">
                             <td className="px-3 py-2 font-mono text-xs">{e.endpoint}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{e.calls}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{fmtCredits(e.credits)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(e.rate)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(e.amountCharged)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 )}
-                {pricing.length > 0 && summary && (
+                {summary && (
                   <p className="mt-2 text-[11px] text-muted-foreground">
-                    Estimated spend this month: ₹{summary.costThisMonth.toFixed(2)} · {fmtCredits(summary.creditsThisMonth)} credits used
+                    Charged this month: {fmtMoney(summary.amountThisMonth)}
                   </p>
                 )}
               </div>
