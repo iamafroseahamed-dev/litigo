@@ -152,26 +152,25 @@ export interface DistrictDetail {
 export interface AdvocatePerformance {
   advocate: string;
   assignedCases: number;
-  openTasks: number;
-  completedTasks: number;
-  overdueTasks: number;
-  totalTasks: number;
-  hearingsThisMonth: number;
-  closedCases: number;
-  completionPct: number;
   readyForHearing: number;
   documentsAwaited: number;
   counterPending: number;
-  compliancePending: number;
+  hearingsThisMonth: number;
+  disposedCases: number;
 }
 
 export interface SectionAdvocateRow {
   section: string;
   advocate: string;
   assignedCases: number;
+}
+
+export interface TaskAssigneePerformance {
+  assignee: string;
   openTasks: number;
   completedTasks: number;
   overdueTasks: number;
+  totalTasks: number;
 }
 
 export interface UpcomingHearingRow {
@@ -217,6 +216,7 @@ export interface ExecutiveAnalytics {
   sectionAdvocates: SectionAdvocateRow[];
   advocates: AdvocatePerformance[];
   leaderboard: AdvocatePerformance[];
+  taskAssignees: TaskAssigneePerformance[];
   upcomingHearings: UpcomingHearingRow[];
   overdueTasks: OverdueTaskRow[];
   connectedTotal: number;
@@ -407,82 +407,80 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
 
-  // ── Advocate performance ──
-  interface AdvAgg { assignedCases: number; open: number; completed: number; overdue: number; total: number; hearings: number; closed: number; ready: number; docs: number; counter: number; compliance: number; }
+  // ── Advocate performance (CASE-level only — never task assignee data) ──
+  interface AdvAgg { assignedCases: number; hearings: number; disposed: number; ready: number; docs: number; counter: number; }
   const advMap = new Map<string, AdvAgg>();
   const adv = (name: string): AdvAgg => {
     let a = advMap.get(name);
-    if (!a) { a = { assignedCases: 0, open: 0, completed: 0, overdue: 0, total: 0, hearings: 0, closed: 0, ready: 0, docs: 0, counter: 0, compliance: 0 }; advMap.set(name, a); }
+    if (!a) { a = { assignedCases: 0, hearings: 0, disposed: 0, ready: 0, docs: 0, counter: 0 }; advMap.set(name, a); }
     return a;
   };
   for (const c of cases) {
-    if (!c.assigned_advocate_name) continue;
-    const a = adv(c.assigned_advocate_name);
+    const name = (c.assigned_advocate_name ?? '').trim();
+    if (!name) continue;
+    const a = adv(name);
     a.assignedCases += 1;
-    if (isDisposed(c.case_status)) a.closed += 1;
+    if (isDisposed(c.case_status)) a.disposed += 1;
     if (c.next_hearing_date && String(c.next_hearing_date).slice(0, 7) === thisMonth) a.hearings += 1;
     if (isReadyForHearing(c)) a.ready += 1;
     if (isDocumentsAwaited(c)) a.docs += 1;
     if (isCounterPending(c)) a.counter += 1;
-    if (isCompliancePending(c)) a.compliance += 1;
-  }
-  for (const t of tasks) {
-    const name = t.assigned_to_name || caseById.get(t.case_id)?.assigned_advocate_name;
-    if (!name) continue;
-    const a = adv(name);
-    a.total += 1;
-    if ((t.task_status ?? '').toLowerCase() === 'completed') a.completed += 1;
-    else a.open += 1;
-    if (taskOverdue(t)) a.overdue += 1;
   }
   const advocates: AdvocatePerformance[] = Array.from(advMap.entries())
     .map(([advocate, a]) => ({
       advocate,
       assignedCases: a.assignedCases,
+      readyForHearing: a.ready,
+      documentsAwaited: a.docs,
+      counterPending: a.counter,
+      hearingsThisMonth: a.hearings,
+      disposedCases: a.disposed,
+    }))
+    .sort((x, y) => y.assignedCases - x.assignedCases);
+
+  // Leaderboard: ranked purely on case work — assigned, disposed, then hearings.
+  const leaderboard = [...advocates]
+    .sort((x, y) =>
+      y.assignedCases - x.assignedCases ||
+      y.disposedCases - x.disposedCases ||
+      y.hearingsThisMonth - x.hearingsThisMonth,
+    )
+    .slice(0, 10);
+
+  // ── Task assignee performance (TASK-level — anyone: IAS, Tahsildar, clerk…) ──
+  interface TaAgg { open: number; completed: number; overdue: number; total: number; }
+  const taMap = new Map<string, TaAgg>();
+  for (const t of tasks) {
+    const name = (t.assigned_to_name ?? '').trim();
+    if (!name) continue;
+    let a = taMap.get(name);
+    if (!a) { a = { open: 0, completed: 0, overdue: 0, total: 0 }; taMap.set(name, a); }
+    a.total += 1;
+    if ((t.task_status ?? '').toLowerCase() === 'completed') a.completed += 1;
+    else a.open += 1;
+    if (taskOverdue(t)) a.overdue += 1;
+  }
+  const taskAssignees: TaskAssigneePerformance[] = Array.from(taMap.entries())
+    .map(([assignee, a]) => ({
+      assignee,
       openTasks: a.open,
       completedTasks: a.completed,
       overdueTasks: a.overdue,
       totalTasks: a.total,
-      hearingsThisMonth: a.hearings,
-      closedCases: a.closed,
-      completionPct: a.total > 0 ? Math.round((a.completed / a.total) * 100) : 0,
-      readyForHearing: a.ready,
-      documentsAwaited: a.docs,
-      counterPending: a.counter,
-      compliancePending: a.compliance,
     }))
-    .sort((x, y) => y.assignedCases - x.assignedCases);
+    .sort((x, y) => (y.openTasks + y.overdueTasks) - (x.openTasks + x.overdueTasks) || y.totalTasks - x.totalTasks);
 
-  const leaderboard = [...advocates]
-    .sort((x, y) =>
-      y.completionPct - x.completionPct ||
-      y.closedCases - x.closedCases ||
-      x.overdueTasks - y.overdueTasks,
-    )
-    .slice(0, 10);
-
-  // ── Section → Advocate matrix ──
+  // ── Section → Advocate matrix (CASE-level: section + assigned advocate) ──
   const saMap = new Map<string, SectionAdvocateRow>();
   const saKey = (s: string, a: string) => `${s}|||${a}`;
   for (const c of cases) {
-    if (!c.assigned_advocate_name) continue;
-    const section = (c.section ?? '').trim() || 'Unspecified';
-    const key = saKey(section, c.assigned_advocate_name);
-    let row = saMap.get(key);
-    if (!row) { row = { section, advocate: c.assigned_advocate_name, assignedCases: 0, openTasks: 0, completedTasks: 0, overdueTasks: 0 }; saMap.set(key, row); }
-    row.assignedCases += 1;
-  }
-  for (const t of tasks) {
-    const c = caseById.get(t.case_id);
-    const name = t.assigned_to_name || c?.assigned_advocate_name;
+    const name = (c.assigned_advocate_name ?? '').trim();
     if (!name) continue;
-    const section = (c?.section ?? '').trim() || 'Unspecified';
+    const section = (c.section ?? '').trim() || 'Unspecified';
     const key = saKey(section, name);
     let row = saMap.get(key);
-    if (!row) { row = { section, advocate: name, assignedCases: 0, openTasks: 0, completedTasks: 0, overdueTasks: 0 }; saMap.set(key, row); }
-    if ((t.task_status ?? '').toLowerCase() === 'completed') row.completedTasks += 1;
-    else row.openTasks += 1;
-    if (taskOverdue(t)) row.overdueTasks += 1;
+    if (!row) { row = { section, advocate: name, assignedCases: 0 }; saMap.set(key, row); }
+    row.assignedCases += 1;
   }
   const sectionAdvocates = Array.from(saMap.values())
     .sort((a, b) => b.assignedCases - a.assignedCases)
@@ -581,6 +579,7 @@ export async function fetchExecutiveAnalytics(): Promise<ExecutiveAnalytics> {
     sectionAdvocates,
     advocates,
     leaderboard,
+    taskAssignees,
     upcomingHearings,
     overdueTasks,
     connectedTotal,
