@@ -169,11 +169,11 @@ _RESPONSE_SCHEMA: Dict[str, Any] = {
 def _summary_text(analysis: Dict[str, Any]) -> str:
     if not isinstance(analysis, dict):
         return str(analysis or '').strip()
-    risk = ((analysis.get('risk_assessment') or {}).get('level') or 'Unknown').strip()
-    about = ((analysis.get('executive_summary') or {}).get('case_about') or '').strip()
-    dispute = ((analysis.get('executive_summary') or {}).get('key_dispute') or '').strip()
-    stage = ((analysis.get('case_status') or {}).get('current_stage') or '').strip()
-    return ' '.join(x for x in [about, dispute and f'Key dispute: {dispute}.', stage and f'Current stage: {stage}.', f'Risk: {risk}.'] if x).strip()
+    risk = ((analysis.get('litigation_risk_assessment') or analysis.get('risk_assessment') or {}).get('level') or 'Unknown').strip()
+    summary = str(analysis.get('executive_legal_summary') or '').strip()
+    if summary:
+        return f'{summary} (Risk: {risk}.)' if risk and risk != 'Unknown' else summary
+    return f'Risk: {risk}.'
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:
@@ -326,11 +326,12 @@ def _compact_context(context: Dict[str, Any]) -> str:
         'interimOrders': _truncate(context.get('interimOrders'), 250),
         'orders': _truncate(context.get('orders'), 250),
         'judgmentDetails': _truncate(context.get('judgmentDetails'), 250),
+        'parsedOrders': _truncate(context.get('parsedOrders'), 400),
         'caseNotes': _truncate(context.get('caseNotes'), 250),
         'internalTasks': _truncate(context.get('internalTasks'), 250),
         'advocateStatusTimeline': _truncate(context.get('advocateStatusTimeline'), 250),
     }
-    return json.dumps(compact, ensure_ascii=False)[:9000]
+    return json.dumps(compact, ensure_ascii=False)[:11000]
 
 
 def _to_list(value: Any) -> list:
@@ -364,110 +365,113 @@ def _int_or(value: Any, default: int = 0) -> int:
         return default
 
 
-def _factual_sections(context: Dict[str, Any]) -> Dict[str, Any]:
-    """Build the deterministic sections from case context so the model only has
-    to produce the narrative/analytical fields. This keeps the model's output
-    (and reasoning) small enough to fit the starter-tier token budget."""
+def _factual_flags(context: Dict[str, Any]) -> Dict[str, bool]:
+    """Derive dashboard signal flags deterministically from case context so they
+    are reliable even if the model omits them."""
+    import datetime
     record = _as_dict(context.get('caseRecord'))
     details = _as_dict(context.get('caseDetailsJson'))
+    today = datetime.date.today().isoformat()
+    in30 = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+
+    next_hearing = str(details.get('nextHearingDate') or record.get('next_hearing_date') or '')[:10]
+    upcoming = bool(next_hearing and today <= next_hearing <= in30)
+
+    status = str(details.get('caseStatus') or record.get('case_status') or '').lower()
+    disposed = 'disposed' in status
 
     return {
-        'parties': {
-            'petitioners': _to_list(details.get('petitioners')),
-            'respondents': _to_list(details.get('respondents')),
-            'advocates': _to_list(details.get('petitionerAdvocates')) + _to_list(details.get('respondentAdvocates')),
-        },
-        'case_status': {
-            'status': _str_or(details.get('caseStatus') or record.get('case_status')),
-            'current_stage': _str_or(details.get('judicialSection') or record.get('section')),
-        },
-        'hearing_analysis': {
-            'total_hearings': _int_or(details.get('hearingCount')),
-        },
-        'timeline_summary': {
-            'filing_date': _str_or(details.get('filingDate') or details.get('registrationDate')),
-            'first_hearing': _str_or(details.get('firstHearingDate')),
-            'last_hearing': _str_or(details.get('lastHearingDate')),
-            'next_hearing': _str_or(details.get('nextHearingDate') or record.get('next_hearing_date')),
-        },
+        'upcoming_hearing': upcoming,
+        'long_pending_default': not disposed,
     }
 
 
-def _normalize_analysis(narrative: Dict[str, Any], factual: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge the model's compact narrative output with deterministic factual
-    sections into the full AiCaseAnalysisJson shape the frontend expects."""
+def _coerce_priority(value: Any) -> str:
+    text = str(value or '').strip().title()
+    return text if text in ('High', 'Medium', 'Low') else 'Medium'
+
+
+def _coerce_action_plan(value: Any) -> list:
+    items = []
+    if isinstance(value, list):
+        for raw in value[:6]:
+            if isinstance(raw, dict):
+                step = _str_or(raw.get('step') or raw.get('action') or raw.get('task'), '')
+                if not step:
+                    continue
+                items.append({
+                    'step': step,
+                    'priority': _coerce_priority(raw.get('priority')),
+                    'owner': _str_or(raw.get('owner') or raw.get('responsible'), 'Assigned Advocate'),
+                })
+            else:
+                step = str(raw).strip()
+                if step:
+                    items.append({'step': step, 'priority': 'Medium', 'owner': 'Assigned Advocate'})
+    return items
+
+
+def _normalize_analysis(narrative: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge the model's compact output into the full AiCaseAnalysisJson shape
+    (10 analytical sections + dashboard flags), filling any missing field with a
+    safe default so the frontend never crashes and partial output still renders."""
     narrative = _as_dict(narrative)
+    flags = _factual_flags(context)
 
     level = str(narrative.get('risk_level') or 'Medium').strip().title()
     if level not in ('Low', 'Medium', 'High'):
         level = 'Medium'
 
-    parties = _as_dict(factual.get('parties'))
-    case_status = _as_dict(factual.get('case_status'))
-    hearing = _as_dict(factual.get('hearing_analysis'))
-    timeline = _as_dict(factual.get('timeline_summary'))
-
     return {
-        'executive_summary': {
-            'case_about': _str_or(narrative.get('case_about'), 'Not available'),
-            'key_dispute': _str_or(narrative.get('key_dispute'), 'Not available'),
+        'executive_legal_summary': _str_or(narrative.get('executive_legal_summary'), 'Not available'),
+        'litigation_risk_assessment': {
+            'level': level,
+            'rationale': _str_or(narrative.get('risk_rationale'), 'Not available'),
+            'key_risk_factors': _to_list(narrative.get('key_risk_factors')),
         },
-        'parties': {
-            'petitioners': _to_list(parties.get('petitioners')),
-            'respondents': _to_list(parties.get('respondents')),
-            'advocates': _to_list(parties.get('advocates')),
+        'hearing_trend_analysis': {
+            'pattern': _str_or(narrative.get('hearing_pattern'), 'Not analysed'),
+            'adjournment_concerns': _str_or(narrative.get('adjournment_concerns'), 'Not analysed'),
+            'observations': _to_list(narrative.get('hearing_observations')),
         },
-        'case_status': {
-            'status': _str_or(case_status.get('status')),
-            'current_stage': _str_or(case_status.get('current_stage')),
+        'department_impact_analysis': {
+            'summary': _str_or(narrative.get('department_impact_summary'), 'Not available'),
+            'financial_exposure': _str_or(narrative.get('financial_exposure'), 'Not available'),
+            'policy_or_operational_impact': _str_or(narrative.get('policy_operational_impact'), 'Not available'),
         },
-        'hearing_analysis': {
-            'total_hearings': _int_or(hearing.get('total_hearings')),
-            'hearing_trend': _str_or(narrative.get('hearing_trend'), 'Not analysed'),
-            'delays': _str_or(narrative.get('delays'), 'Not analysed'),
-        },
-        'key_legal_observations': {
-            'important_legal_issues': _to_list(narrative.get('important_legal_issues')),
-            'risks': _to_list(narrative.get('risks')),
-            'potential_impact': _to_list(narrative.get('potential_impact')),
-        },
-        'timeline_summary': {
-            'filing_date': _str_or(timeline.get('filing_date')),
-            'first_hearing': _str_or(timeline.get('first_hearing')),
-            'last_hearing': _str_or(timeline.get('last_hearing')),
-            'next_hearing': _str_or(timeline.get('next_hearing')),
-        },
-        'advocate_action_items': {
-            'immediate_actions': _to_list(narrative.get('immediate_actions')),
-            'documents_required': _to_list(narrative.get('documents_required')),
-            'follow_up_recommendations': _to_list(narrative.get('follow_up_recommendations')),
-        },
+        'advocate_recommendations': _to_list(narrative.get('advocate_recommendations')),
+        'missing_information': _to_list(narrative.get('missing_information')),
+        'next_hearing_preparation_checklist': _to_list(narrative.get('next_hearing_preparation_checklist')),
+        'strategic_recommendations': _to_list(narrative.get('strategic_recommendations')),
+        'similar_case_risk_indicators': _to_list(narrative.get('similar_case_risk_indicators')),
+        'ai_action_plan': _coerce_action_plan(narrative.get('ai_action_plan')),
         'risk_assessment': {
             'level': level,
-            'reason': _str_or(narrative.get('risk_reason'), 'Not available'),
+            'reason': _str_or(narrative.get('risk_rationale'), 'Not available'),
         },
-        'department_impact': {
-            'organization_impact': _str_or(narrative.get('organization_impact'), 'Not available'),
-            'department_impact': _str_or(narrative.get('department_impact'), 'Not available'),
-        },
-        'recommended_next_steps': _to_list(narrative.get('recommended_next_steps')),
-        'attention_required': bool(narrative.get('attention_required')),
+        'attention_required': bool(narrative.get('attention_required')) or level == 'High',
         'no_activity': bool(narrative.get('no_activity')),
-        'long_pending': bool(narrative.get('long_pending')),
-        'upcoming_hearing': bool(narrative.get('upcoming_hearing')),
+        'long_pending': bool(narrative.get('long_pending', flags['long_pending_default'])) if 'long_pending' in narrative else bool(flags['long_pending_default'] and level != 'Low'),
+        'upcoming_hearing': bool(narrative.get('upcoming_hearing')) or flags['upcoming_hearing'],
     }
 
 
 def _make_payload(case_number: str, prompt_context: str, structured: bool, reasoning_effort: Any = 'low') -> Dict[str, Any]:
     user_content = (
-        'Return ONLY this compact JSON object (no markdown, no extra text). Keep every string under 25 words and every array to at most 3 short items:\n'
+        'You are advising a government legal department. Review the case and produce a senior-advocate analysis. '
+        'Do NOT restate basic case metadata (parties, court name, filing date, status, hearing counts) — focus only on analysis, risk and strategy. '
+        'Return ONLY this compact JSON object (no markdown, no commentary). Keep each string under 40 words and each array to at most 4 short items:\n'
         '{'
-        '"case_about":"","key_dispute":"",'
-        '"important_legal_issues":[],"risks":[],"potential_impact":[],'
-        '"immediate_actions":[],"documents_required":[],"follow_up_recommendations":[],'
-        '"risk_level":"Low|Medium|High","risk_reason":"",'
-        '"organization_impact":"","department_impact":"",'
-        '"recommended_next_steps":[],'
+        '"executive_legal_summary":"",'
+        '"risk_level":"Low|Medium|High","risk_rationale":"","key_risk_factors":[],'
+        '"hearing_pattern":"","adjournment_concerns":"","hearing_observations":[],'
+        '"department_impact_summary":"","financial_exposure":"","policy_operational_impact":"",'
+        '"advocate_recommendations":[],'
+        '"missing_information":[],'
+        '"next_hearing_preparation_checklist":[],'
+        '"strategic_recommendations":[],'
+        '"similar_case_risk_indicators":[],'
+        '"ai_action_plan":[{"step":"","priority":"High|Medium|Low","owner":""}],'
         '"attention_required":false,"no_activity":false,"long_pending":false,"upcoming_hearing":false'
         '}\n\n'
         f'Case Number: {case_number}\n\n'
@@ -482,9 +486,10 @@ def _make_payload(case_number: str, prompt_context: str, structured: bool, reaso
             {
                 'role': 'system',
                 'content': (
-                    'You are a senior Indian litigation analyst for a government legal team. '
+                    'You are a senior Indian advocate and legal consultant advising a government litigation department. '
+                    'Write practical, decisive analysis as if briefing the department head — risk, strategy, hearing preparation and action steps. '
                     'Respond immediately with the requested JSON object only. Do not deliberate, do not show reasoning, do not add commentary. '
-                    'Be factual and concise; if data is missing, use a short placeholder like "Not available". Output one JSON object and nothing else.'
+                    'Be factual; if data is missing, say so briefly. Output one JSON object and nothing else.'
                 ),
             },
             {
@@ -549,8 +554,7 @@ class handler(BaseHTTPRequestHandler):
             case_number = 'UNKNOWN'
 
         prompt_context = _compact_context(context)
-        factual = _factual_sections(context)
-        # Reasoning disabled (reasoning_effort=None) so the full 4096-token budget
+        # Reasoning disabled (reasoning_effort=None) so the full token budget
         # goes to the JSON output instead of being consumed by chain-of-thought.
         payload = _make_payload(case_number, prompt_context, structured=False, reasoning_effort=None)
 
@@ -650,7 +654,7 @@ class handler(BaseHTTPRequestHandler):
                 }, 502)
                 return
 
-        analysis = _normalize_analysis(analysis, factual)
+        analysis = _normalize_analysis(analysis, context)
         self._json({
             'success': True,
             'summary': _summary_text(analysis),
