@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict
 
@@ -124,6 +125,60 @@ def _summary_text(analysis: Dict[str, Any]) -> str:
     return ' '.join(x for x in [about, dispute and f'Key dispute: {dispute}.', stage and f'Current stage: {stage}.', f'Risk: {risk}.'] if x).strip()
 
 
+def _try_parse_json_text(text: str) -> Dict[str, Any] | None:
+    text = (text or '').strip()
+    if not text:
+        return None
+
+    candidates = [text]
+
+    fenced = re.search(r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```', text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        candidates.append(text[first_brace:last_brace + 1].strip())
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+    return None
+
+
+def _extract_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
+    message = ((result.get('choices') or [{}])[0].get('message') or {})
+
+    content = message.get('content')
+    if isinstance(content, str):
+        parsed = _try_parse_json_text(content)
+        if parsed is not None:
+            return parsed
+
+    tool_calls = message.get('tool_calls') or []
+    if isinstance(tool_calls, list):
+        for tool_call in tool_calls:
+            fn = (tool_call or {}).get('function') or {}
+            args = fn.get('arguments')
+            if isinstance(args, str):
+                parsed = _try_parse_json_text(args)
+                if parsed is not None:
+                    return parsed
+
+    reasoning = message.get('reasoning_content')
+    if isinstance(reasoning, str):
+        parsed = _try_parse_json_text(reasoning)
+        if parsed is not None:
+            return parsed
+
+    raise ValueError('No parseable JSON analysis payload found in Sarvam response')
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
@@ -218,13 +273,19 @@ class handler(BaseHTTPRequestHandler):
         try:
             resp.raise_for_status()
             result = resp.json()
-            message = ((result.get('choices') or [{}])[0].get('message') or {})
-            content = message.get('content')
-            if not isinstance(content, str) or not content.strip():
-                raise ValueError('Empty AI response content')
-            analysis = json.loads(content)
-        except Exception:
-            self._json({'success': False, 'message': 'Sarvam AI returned an unreadable response.'}, 502)
+            analysis = _extract_analysis(result)
+        except Exception as exc:
+            snippet = ''
+            try:
+                snippet = json.dumps(resp.json())[:400]
+            except Exception:
+                snippet = resp.text[:400]
+            self._json({
+                'success': False,
+                'message': 'Sarvam AI returned an unreadable response.',
+                'detail': str(exc),
+                'responsePreview': snippet,
+            }, 502)
             return
 
         self._json({
