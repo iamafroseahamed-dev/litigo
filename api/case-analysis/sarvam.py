@@ -20,7 +20,9 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-SARVAM_MAX_TOKENS = _int_env('SARVAM_MAX_TOKENS', 8000)
+# Starter tier hard-caps max_tokens at 4096. Clamp so we never trigger a 400.
+SARVAM_TOKEN_CEILING = 4096
+SARVAM_MAX_TOKENS = min(_int_env('SARVAM_MAX_TOKENS', 4000), SARVAM_TOKEN_CEILING)
 
 
 def _read_local_env_value(name: str) -> str:
@@ -415,7 +417,9 @@ class handler(BaseHTTPRequestHandler):
             case_number = 'UNKNOWN'
 
         prompt_context = _compact_context(context)
-        payload = _make_payload(case_number, prompt_context, structured=False)
+        # Reasoning disabled (reasoning_effort=None) so the full 4096-token budget
+        # goes to the JSON output instead of being consumed by chain-of-thought.
+        payload = _make_payload(case_number, prompt_context, structured=False, reasoning_effort=None)
 
         headers = {
             'api-subscription-key': api_key,
