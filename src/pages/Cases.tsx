@@ -198,7 +198,7 @@ function CaseForm({ initial, advocates, orgId, onSave, onCancel, saving }: {
             <Input placeholder="e.g. Chennai" value={form.district ?? ''} onChange={txt('district')} />
           </Field>
           <Field label="Section">
-            <Input placeholder="e.g. Sec. 34 IPC" value={form.section ?? ''} onChange={txt('section')} />
+            <Input value={form.section ?? ''} onChange={txt('section')} />
           </Field>
         </div>
       </div>
@@ -465,8 +465,10 @@ export default function CasesPage() {
   // ── Connected cases counts ───────────────────────────────────────────────────
   const [connCounts, setConnCounts]         = useState<Record<string, number>>({});
   const { user } = useAuth();
-  const { org } = useOrg();
-  const orgId = org?.id ?? null;
+  const { org, orgId, isPlatformAdmin, role } = useOrg();
+  // Org id used when *creating* / bulk-assigning cases: prefer the canonical
+  // filter id, else the resolved display org (covers platform admins).
+  const formOrgId = orgId ?? org?.id ?? null;
   const isAdmin = user?.profile?.role === 'admin';
   const createdBy = user?.profile?.full_name || user?.email || 'Unknown';
 
@@ -478,16 +480,22 @@ export default function CasesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase
+    let query = supabase
       .from('cases')
       .select('*')
       .eq('court_name', 'Principal Bench of Madras High Court')
       .order('created_at', { ascending: false });
+    // Platform admins see every organisation; everyone else is scoped to their
+    // own org (legacy rows with a NULL organization_id stay visible).
+    if (!isPlatformAdmin && orgId) query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
+    const { data, error: err } = await query;
     if (err) { setError(err.message); setLoading(false); return; }
-    console.log('[Cases] refreshed list', { count: data?.length ?? 0, ids: (data ?? []).map(c => c.id) });
+    if (import.meta.env.DEV) {
+      console.log('[Cases] load', { role, orgId, isPlatformAdmin, returned: data?.length ?? 0 });
+    }
     setCases(data ?? []);
     setLoading(false);
-  }, []);
+  }, [isPlatformAdmin, orgId, role]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -567,9 +575,9 @@ export default function CasesPage() {
   // stay visible (with a console warning + admin bulk-assign) so legacy data is
   // not lost after the multi-org rollout. When no org is resolved we show all.
   const orgScoped = useMemo(() => {
-    if (!orgId) return cases;
+    if (isPlatformAdmin || !orgId) return cases;
     return cases.filter(c => !c.organization_id || c.organization_id === orgId);
-  }, [cases, orgId]);
+  }, [cases, orgId, isPlatformAdmin]);
 
   const unassignedCount = useMemo(() => cases.filter(c => !c.organization_id).length, [cases]);
 
@@ -581,12 +589,12 @@ export default function CasesPage() {
 
   const [bulkAssigning, setBulkAssigning] = useState(false);
   async function bulkAssignUnassigned() {
-    if (!orgId) { toast.error('No organization to assign.'); return; }
+    if (!formOrgId) { toast.error('No organization to assign.'); return; }
     setBulkAssigning(true);
     try {
       const ids = cases.filter(c => !c.organization_id).map(c => c.id);
       if (ids.length === 0) return;
-      const { error: err } = await supabase.from('cases').update({ organization_id: orgId }).in('id', ids);
+      const { error: err } = await supabase.from('cases').update({ organization_id: formOrgId }).in('id', ids);
       if (err) throw new Error(err.message);
       toast.success(`Assigned ${ids.length} case(s) to ${org?.organization_name ?? 'organization'}.`);
       await load();
