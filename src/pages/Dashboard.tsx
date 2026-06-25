@@ -30,28 +30,31 @@ function priorityPill(p: 'High' | 'Medium' | 'Low'): string {
 }
 
 function KpiCard({
-  label, value, icon: Icon, accent, loading, onClick, danger,
+  label, value, icon: Icon, accent, chip, loading, onClick, danger,
 }: {
   label: string;
   value: number;
   icon: React.ComponentType<{ className?: string }>;
   accent: string;
+  chip: string;
   loading: boolean;
   onClick?: () => void;
   danger?: boolean;
 }) {
   const body = (
-    <Card className={`${onClick ? 'h-full hover:-translate-y-0.5 hover:shadow-card-hover' : 'h-full'} ${danger && value > 0 ? 'border-red-300 bg-red-50/40' : ''}`}>
+    <Card className={`group relative h-full overflow-hidden ${onClick ? 'hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card-hover' : ''} ${danger && value > 0 ? 'border-red-200 bg-red-50/30' : ''}`}>
       <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <span className={`flex h-8 w-8 items-center justify-center rounded-lg bg-muted/60 ${accent}`}>
-            <Icon className="h-4 w-4" />
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-2.5">
+            <p className="truncate text-[13px] font-medium text-muted-foreground">{label}</p>
+            {loading
+              ? <Skeleton className="h-9 w-16" />
+              : <p className={`text-[1.75rem] font-bold leading-none tabular-nums ${accent}`}>{value.toLocaleString('en-IN')}</p>}
+          </div>
+          <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${chip} ${accent} shadow-xs ring-1 ring-inset ring-black/[0.03] transition-transform duration-200 group-hover:scale-105`}>
+            <Icon className="h-[1.15rem] w-[1.15rem]" />
           </span>
         </div>
-        {loading
-          ? <Skeleton className="mt-3 h-8 w-16" />
-          : <p className={`mt-2 text-3xl font-bold tabular-nums ${accent}`}>{value.toLocaleString('en-IN')}</p>}
       </CardContent>
     </Card>
   );
@@ -67,12 +70,12 @@ function KpiCard({
 
 function StatCard({ label, value, accent, loading }: { label: string; value: number; accent: string; loading: boolean }) {
   return (
-    <Card>
+    <Card className="transition-all duration-200 hover:border-primary/20 hover:shadow-card-hover">
       <CardContent className="px-4 py-4 text-center">
         {loading
           ? <Skeleton className="mx-auto h-7 w-12" />
-          : <p className={`text-2xl font-bold ${accent}`}>{value.toLocaleString('en-IN')}</p>}
-        <p className="mt-1 text-[11px] text-muted-foreground">{label}</p>
+          : <p className={`text-2xl font-bold tabular-nums ${accent}`}>{value.toLocaleString('en-IN')}</p>}
+        <p className="mt-1.5 text-[11px] font-medium leading-tight text-muted-foreground">{label}</p>
       </CardContent>
     </Card>
   );
@@ -114,29 +117,29 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold sm:text-2xl">Welcome to Adalat360</h1>
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Welcome to Adalat360</h1>
+        <p className="max-w-3xl text-sm text-muted-foreground">
           Actionable litigation insight — which cases need attention, which hearings are coming, who owns each case.
         </p>
       </div>
 
       {exec.error && (
-        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+        <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm font-medium text-destructive">
           {(exec.error as Error).message}
         </p>
       )}
 
       {/* Executive Summary */}
       <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Executive Summary</p>
+        <p className="eyebrow mb-3">Executive Summary</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <KpiCard label="Total Cases"     value={kp?.totalCases ?? 0}     icon={Briefcase}    accent="text-slate-700"   loading={exec.isLoading} onClick={() => navigate('/cases')} />
-          <KpiCard label="Pending Cases"   value={kp?.pendingCases ?? 0}   icon={Clock}        accent="text-amber-600"   loading={exec.isLoading} />
-          <KpiCard label="Disposed Cases"  value={kp?.disposedCases ?? 0}  icon={CheckCircle2} accent="text-emerald-600" loading={exec.isLoading} />
-          <KpiCard label="Active Cases"    value={kp?.activeCases ?? 0}    icon={Gavel}        accent="text-blue-600"    loading={exec.isLoading} />
-          <KpiCard label="Sensitive Cases" value={kp?.sensitiveCases ?? 0} icon={ShieldAlert}  accent="text-rose-600"    loading={exec.isLoading} />
-          <KpiCard label="CLA Party Cases" value={kp?.claPartyCases ?? 0}  icon={Landmark}     accent="text-indigo-600"  loading={exec.isLoading} />
+          <KpiCard label="Total Cases"     value={kp?.totalCases ?? 0}     icon={Briefcase}    accent="text-slate-700"   chip="bg-slate-100"   loading={exec.isLoading} onClick={() => navigate('/cases')} />
+          <KpiCard label="Pending Cases"   value={kp?.pendingCases ?? 0}   icon={Clock}        accent="text-amber-600"   chip="bg-amber-50"    loading={exec.isLoading} />
+          <KpiCard label="Disposed Cases"  value={kp?.disposedCases ?? 0}  icon={CheckCircle2} accent="text-emerald-600" chip="bg-emerald-50"  loading={exec.isLoading} />
+          <KpiCard label="Active Cases"    value={kp?.activeCases ?? 0}    icon={Gavel}        accent="text-blue-600"    chip="bg-blue-50"     loading={exec.isLoading} />
+          <KpiCard label="Sensitive Cases" value={kp?.sensitiveCases ?? 0} icon={ShieldAlert}  accent="text-rose-600"    chip="bg-rose-50"     loading={exec.isLoading} />
+          <KpiCard label="CLA Party Cases" value={kp?.claPartyCases ?? 0}  icon={Landmark}     accent="text-indigo-600"  chip="bg-indigo-50"   loading={exec.isLoading} />
         </div>
       </div>
 
