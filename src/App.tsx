@@ -26,7 +26,7 @@ const Dashboard      = lazy(() => import('@/pages/Dashboard'));
 const Cases          = lazy(() => import('@/pages/Cases'));
 const TodaysListings  = lazy(() => import('@/pages/TodaysListings'));
 const UpcomingHearings = lazy(() => import('@/pages/UpcomingHearings'));
-const Settings       = lazy(() => import('@/pages/Settings'));
+const Administration  = lazy(() => import('@/pages/Administration'));
 const Organizations  = lazy(() => import('@/pages/Organizations'));
 const BulkUpload     = lazy(() => import('@/pages/BulkUpload'));
 const About          = lazy(() => import('@/pages/About'));
@@ -63,7 +63,8 @@ export default function App() {
                     <Route path="/cases"           element={<Cases />} />
                     <Route path="/todays-listings" element={<TodaysListings />} />
                     <Route path="/upcoming-hearings" element={<UpcomingHearings />} />
-                    <Route path="/settings"        element={<Settings />} />
+                    <Route path="/administration"  element={<Administration />} />
+                    <Route path="/settings"        element={<Navigate to="/administration" replace />} />
                     <Route path="/organizations"   element={<Organizations />} />
                     <Route path="/bulk-upload"     element={<BulkUpload />} />
                     <Route path="/about"           element={<About />} />

@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Briefcase, List,
-  CalendarDays, Settings, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu, Info, Upload,
+  CalendarDays, ShieldCheck, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu, Info, Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -33,8 +33,8 @@ const NAV_GROUPS: { heading: string; items: { to: string; label: string; icon: t
   {
     heading: 'Workspace',
     items: [
-      { to: '/bulk-upload', label: 'Administration', icon: Upload },
-      { to: '/settings', label: 'Settings', icon: Settings },
+      { to: '/bulk-upload', label: 'Bulk Upload', icon: Upload },
+      { to: '/administration', label: 'Administration', icon: ShieldCheck },
       { to: '/about', label: 'About', icon: Info },
     ],
   },
@@ -46,7 +46,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/todays-listings': "Today's Listings",
   '/upcoming-hearings': 'Upcoming Hearings',
   '/bulk-upload':      'Bulk Upload',
-  '/settings':        'Settings',
+  '/administration':  'Administration',
   '/organizations':   'Organization Management',
   '/about':           'About',
 };
