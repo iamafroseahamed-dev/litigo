@@ -189,6 +189,7 @@ export default function DashboardPage() {
       {/* Tamil Nadu Litigation Heat Map — click a district for full analytics */}
       <TNDistrictMap
         districts={a?.districts ?? []}
+        details={a?.districtDetails}
         selected={selectedDistrict}
         onSelect={(d) => setSelectedDistrict(d)}
         loading={exec.isLoading}
@@ -200,6 +201,57 @@ export default function DashboardPage() {
         open={!!selectedDistrict}
         onClose={() => setSelectedDistrict(null)}
       />
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><Scale className="h-4 w-4 text-blue-600" /> Portfolio Breakdown</CardTitle>
+          <p className="text-xs text-muted-foreground">Dashboard view organized by case status, case type and advocate ownership.</p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-2 rounded-md border p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Case Status</p>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between"><span>Active</span><span className="font-semibold tabular-nums text-blue-600">{(kp?.activeCases ?? 0).toLocaleString('en-IN')}</span></div>
+                <div className="flex items-center justify-between"><span>Pending</span><span className="font-semibold tabular-nums text-amber-600">{(kp?.pendingCases ?? 0).toLocaleString('en-IN')}</span></div>
+                <div className="flex items-center justify-between"><span>Disposed</span><span className="font-semibold tabular-nums text-emerald-600">{(kp?.disposedCases ?? 0).toLocaleString('en-IN')}</span></div>
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-md border p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top Case Types</p>
+              {(a?.caseTypes ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No case type data.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(a?.caseTypes ?? []).slice(0, 6).map((r, i) => (
+                    <div key={`${r.label}-${i}`} className="flex items-center justify-between text-sm">
+                      <span className="truncate pr-3">{r.label}</span>
+                      <span className="font-semibold tabular-nums">{r.value.toLocaleString('en-IN')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 rounded-md border p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Advocate Workload</p>
+              {(a?.advocates ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No advocate data.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(a?.advocates ?? []).slice(0, 6).map((r, i) => (
+                    <div key={`${r.advocate}-${i}`} className="flex items-center justify-between text-sm">
+                      <span className="truncate pr-3">{r.advocate}</span>
+                      <span className="font-semibold tabular-nums">{r.assignedCases.toLocaleString('en-IN')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Advocate Performance (case-level) */}
       <Card>
