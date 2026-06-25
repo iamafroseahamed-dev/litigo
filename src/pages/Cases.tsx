@@ -54,7 +54,7 @@ interface CaseFormExtras { notes: string[]; tasks: DraftTask[]; connections: Dra
 const EMPTY_FORM: FormData = {
   cnr_number: null, case_number: '', court_name: null, district: null, section: null,
   petitioner: null, respondent: null, prayer: null, subject_matter: null,
-  cla_party_status: null, sensitivity: null, case_status: null, nature_of_disposal: null,
+  cla_party_status: null, sensitivity: null, case_status: null, case_type: null, nature_of_disposal: null,
   last_hearing_date: null, last_hearing_update: null, next_hearing_date: null,
   advocate_name: null, advocate_mobile: null, advocate_email: null,
   client_name: null, client_mobile: null, client_whatsapp: null, client_email: null,
