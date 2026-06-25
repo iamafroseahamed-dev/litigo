@@ -1279,31 +1279,78 @@ function BillingModule({ organizations }: { organizations: Organization[] }) {
 
 // ── Audit logs module (future) ────────────────────────────────────────────────
 
-function AuditLogsModule() {
-  const planned = [
-    'User sign-ins and sign-outs',
-    'Role and permission changes',
-    'User invitations and removals',
-    'Credit top-ups and plan changes',
-    'Case and advocate assignments',
-  ];
+const AUDIT_ACTION_META: Record<string, { label: string; variant: BadgeVariant }> = {
+  user_created: { label: 'User Created', variant: 'success' },
+  user_updated: { label: 'User Updated', variant: 'info' },
+  user_disabled: { label: 'User Disabled', variant: 'destructive' },
+  user_activated: { label: 'User Activated', variant: 'success' },
+  password_reset: { label: 'Password Reset', variant: 'warning' },
+  role_changed: { label: 'Role Changed', variant: 'purple' },
+};
+
+function AuditLogsModule({ actorRole, orgId }: { actorRole: Role; orgId: string | null }) {
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetchAuditLogs(actorRole, orgId)
+      .then(rows => { if (active) setLogs(rows); })
+      .catch(e => { if (active) { toast.error(e instanceof Error ? e.message : 'Failed to load audit logs.'); setLogs([]); } })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [actorRole, orgId]);
+
   return (
     <div className="space-y-4">
-      <ModuleHeader title="Audit Logs" description="A tamper-evident history of administrative activity." action={<Badge variant="warning">Coming soon</Badge>} />
+      <ModuleHeader title="Audit Logs" description="A history of administrative activity, with actor and timestamp." />
       <Card>
-        <CardContent className="p-6">
-          <div className="flex items-start gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><History className="h-5 w-5" /></span>
-            <div>
-              <p className="font-semibold text-foreground">Audit logging is on the roadmap</p>
-              <p className="mt-1 text-sm text-muted-foreground">Once enabled, this module records the following events with actor, timestamp and before/after values:</p>
-              <ul className="mt-3 space-y-1.5">
-                {planned.map(item => (
-                  <li key={item} className="flex items-center gap-2 text-sm text-foreground"><Check className="h-3.5 w-3.5 text-emerald-500" /> {item}</li>
-                ))}
-              </ul>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="space-y-3 p-4">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-6 w-28 rounded-full" />
+                  <Skeleton className="h-4 flex-1" />
+                  <Skeleton className="h-4 w-32" />
+                </div>
+              ))}
             </div>
-          </div>
+          ) : logs.length === 0 ? (
+            <EmptyState
+              icon={History}
+              title="No activity yet"
+              description="Administrative actions such as creating users or resetting passwords will appear here."
+              className="m-4"
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Actor</TableHead>
+                    <TableHead>Target</TableHead>
+                    <TableHead>When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logs.map(log => {
+                    const meta = AUDIT_ACTION_META[log.action] ?? { label: log.action, variant: 'secondary' as BadgeVariant };
+                    return (
+                      <TableRow key={log.id}>
+                        <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{log.actor_email || '—'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{log.target_email || '—'}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDate(log.created_at)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
