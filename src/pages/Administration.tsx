@@ -18,14 +18,14 @@ import {
 } from '@/lib/organizations';
 import {
   fetchUsers, createUser, updateUser, setUserActive, resetUserPassword,
-  fetchAdvocates, updateMyNotificationPreferences,
-  type AppUser, type UserInput, type AdvocateSummary, type NotificationPrefs,
+  fetchAdvocates, updateMyNotificationPreferences, fetchAuditLogs,
+  type AppUser, type UserInput, type AdvocateSummary, type NotificationPrefs, type AuditLogEntry,
 } from '@/lib/userManagement';
 import {
   ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_BADGE_VARIANT, normalizeRole, assignableRoles,
   canManageUsers, canChangeOrganization, canViewPlatformTools,
   canAccessAdministration, canConfigureRoles, canManageOrgSettings,
-  canManageCredits, canManageBilling, isPlatformAdmin,
+  canManageCredits, canManageBilling, isPlatformAdmin, type BadgeVariant,
 } from '@/lib/roles';
 import {
   PERMISSION_CATEGORIES, PERMISSION_LABELS, PERMISSION_DESCRIPTIONS, MATRIX_ROLES,
@@ -1399,7 +1399,7 @@ export default function Administration() {
       case 'organization': return <OrgSettingsTab org={org} />;
       case 'credits': return <ApiCreditsModule org={org} actorRole={actorRole} />;
       case 'billing': return <BillingModule organizations={organizations} />;
-      case 'audit': return <AuditLogsModule />;
+      case 'audit': return <AuditLogsModule actorRole={actorRole} orgId={orgId} />;
       case 'dashboard':
       default:
         return <AdminDashboard actorRole={actorRole} orgId={orgId} org={org} organizations={organizations} onNavigate={setActive} />;
