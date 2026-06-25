@@ -17,13 +17,13 @@ import {
   type OrgUsageSummary,
 } from '@/lib/organizations';
 import {
-  fetchUsers, createUser, updateUser, setUserActive, deleteUser,
+  fetchUsers, createUser, updateUser, setUserActive, resetUserPassword,
   fetchAdvocates, updateMyNotificationPreferences,
   type AppUser, type UserInput, type AdvocateSummary, type NotificationPrefs,
 } from '@/lib/userManagement';
 import {
   ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_BADGE_VARIANT, normalizeRole, assignableRoles,
-  canManageUsers, canDeleteUsers, canChangeOrganization, canViewPlatformTools,
+  canManageUsers, canChangeOrganization, canViewPlatformTools,
   canAccessAdministration, canConfigureRoles, canManageOrgSettings,
   canManageCredits, canManageBilling, isPlatformAdmin,
 } from '@/lib/roles';
@@ -48,11 +48,17 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Users, Scale, Building2, Search, Plus, Edit2, Trash2, ShieldCheck, CreditCard,
+  Users, Scale, Building2, Search, Plus, Edit2, ShieldCheck, CreditCard,
   BarChart3, Mail, Loader2, ShieldAlert, ArrowRight, LayoutDashboard, SlidersHorizontal,
   Bell, History, Wallet, Check, X, RefreshCw, TrendingUp, Activity, ChevronRight,
+  MoreHorizontal, KeyRound, Ban, UserCheck, Copy, Phone,
 } from 'lucide-react';
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -86,15 +92,75 @@ const NOTIFICATION_FIELDS: { key: keyof UserInput; label: string; hint: string }
 ];
 
 const EMPTY_USER: UserInput = {
-  full_name: '', email: '', role: 'viewer', organization_id: null, active: true,
+  full_name: '', email: '', mobile: '', role: 'viewer', organization_id: null, active: true,
   email_notifications: true, notify_hearing_reminder: true, notify_task_assignment: true,
   notify_daily_cause_list: true, notify_case_assignment: true,
 };
 
+// ── Credential dialog (one-time temporary password) ───────────────────────────
+
+function CredentialDialog({
+  open, title, description, email, password, onClose,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  email: string;
+  password: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(`Email: ${email}\nTemporary password: ${password}`);
+      setCopied(true);
+      toast.success('Credentials copied to clipboard.');
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Could not copy to clipboard.');
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-emerald-600" /> {title}
+          </DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-lg border border-border/70 bg-muted/40 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Email</p>
+            <p className="break-all font-mono text-sm text-foreground">{email}</p>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-muted/40 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Temporary Password</p>
+            <p className="break-all font-mono text-sm font-semibold text-foreground">{password}</p>
+          </div>
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>This password is shown only once. Share it securely and ask the user to change it after first sign-in.</span>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={copy} className="gap-1.5">
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── User form dialog ──────────────────────────────────────────────────────────
 
 function UserFormDialog({
-  open, mode, initial, actorRole, defaultOrgId, organizations, onClose, onSaved,
+  open, mode, initial, actorRole, defaultOrgId, organizations, onClose, onSaved, onCreated,
 }: {
   open: boolean;
   mode: 'add' | 'edit';
@@ -104,6 +170,7 @@ function UserFormDialog({
   organizations: Organization[];
   onClose: () => void;
   onSaved: () => void;
+  onCreated: (info: { email: string; temporaryPassword: string }) => void;
 }) {
   const [form, setForm] = useState<UserInput>(EMPTY_USER);
   const [saving, setSaving] = useState(false);
@@ -123,6 +190,7 @@ function UserFormDialog({
       setForm({
         full_name: initial.full_name ?? '',
         email: initial.email ?? '',
+        mobile: initial.mobile ?? '',
         role: normalizeRole(initial.role),
         organization_id: initial.organization_id,
         active: initial.active,
@@ -152,8 +220,12 @@ function UserFormDialog({
     setSaving(true);
     try {
       if (mode === 'add') {
-        await createUser(form);
+        const result = await createUser(form);
         toast.success('User created.');
+        onSaved();
+        onClose();
+        onCreated({ email: form.email.trim().toLowerCase(), temporaryPassword: result.temporaryPassword });
+        return;
       } else if (initial) {
         await updateUser(initial.id, form);
         toast.success('User updated.');
@@ -162,9 +234,12 @@ function UserFormDialog({
       onClose();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(msg.includes('duplicate') ? 'A user with this email already exists.'
-        : msg.includes('row-level') ? 'Permission denied for this organization.'
-        : `Save failed: ${msg}`);
+      toast.error(
+        /already exists/i.test(msg) ? 'A user with this email already exists.'
+          : /permission|not allowed|outside your organization/i.test(msg) ? msg
+          : /organization not found/i.test(msg) ? 'The selected organization could not be found.'
+          : msg,
+      );
     } finally {
       setSaving(false);
     }
