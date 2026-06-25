@@ -500,7 +500,6 @@ export default function CasesPage() {
     let query = supabase
       .from('cases')
       .select('*')
-      .eq('court_name', 'Principal Bench of Madras High Court')
       .order('created_at', { ascending: false });
     // Platform admins see every organisation; everyone else is scoped to their
     // own org (legacy rows with a NULL organization_id stay visible).
