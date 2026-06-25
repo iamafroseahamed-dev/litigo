@@ -32,15 +32,25 @@ export interface EcourtsApiUsage {
   created_at: string;
 }
 
+export type Role = 'platform_admin' | 'super_admin' | 'admin' | 'advocate' | 'viewer' | 'user';
+
 export interface Profile {
   id: string;
   user_id: string;
   organization_id: string;
   full_name: string;
   email: string;
-  role: 'admin' | 'advocate' | 'user' | 'super_admin';
+  role: Role;
   active: boolean;
   created_at: string;
+  // User Management (migration 017)
+  last_login_at?: string | null;
+  email_notifications?: boolean;
+  notify_hearing_reminder?: boolean;
+  notify_task_assignment?: boolean;
+  notify_daily_cause_list?: boolean;
+  notify_case_assignment?: boolean;
+  updated_at?: string | null;
   organization?: Organization;
 }
 
