@@ -648,6 +648,11 @@ export default function CasesPage() {
   const hasFilters = search || Object.values(filters).some(Boolean);
   const clearFilters = () => { setSearch(''); setFilters(EMPTY_FILTERS); };
 
+  const caseTypeOptions = useMemo(
+    () => Array.from(new Set(orgScoped.map(c => (c.case_type || deriveCaseType(c.case_number) || '').trim()).filter(Boolean))).sort(),
+    [orgScoped],
+  );
+
   // Record an advocate-status change in the audit trail (case_status_history).
   // Best-effort: never blocks the save if the table is missing.
   async function logAdvocateStatusChange(caseId: string, oldStatus: string | null, newStatus: string | null) {
@@ -837,6 +842,7 @@ export default function CasesPage() {
               const rows = filtered.map(c => ({
                 'Case Number': c.case_number ?? '',
                 'CNR Number': c.cnr_number ?? '',
+                'Case Type': c.case_type || deriveCaseType(c.case_number) || '',
                 'Court': c.court_name ?? '',
                 'District': c.district ?? '',
                 'Section': c.section ?? '',
@@ -872,7 +878,7 @@ export default function CasesPage() {
 
       {showFilters && (
         <Card className="p-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
             <div className="space-y-1">
               <Label className="text-xs">District</Label>
               <Input className="h-8 text-xs" placeholder="Filter…" value={filters.district}
@@ -882,6 +888,16 @@ export default function CasesPage() {
               <Label className="text-xs">Section</Label>
               <Input className="h-8 text-xs" placeholder="Filter…" value={filters.section}
                 onChange={e => setFilters(p => ({ ...p, section: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Case Type</Label>
+              <Select value={filters.case_type || '__all__'} onValueChange={setFilter('case_type')}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All</SelectItem>
+                  {caseTypeOptions.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">CLA Party</Label>
@@ -990,7 +1006,7 @@ export default function CasesPage() {
               className="m-4"
             />
           ) : (
-            <Table className="min-w-[1580px]">
+            <Table className="min-w-[1700px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-36">Case No.</TableHead>
