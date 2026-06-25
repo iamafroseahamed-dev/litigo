@@ -15,6 +15,7 @@ export interface AppUser {
   organization_id: string | null;
   full_name: string;
   email: string;
+  mobile: string | null;
   role: Role;
   active: boolean;
   last_login_at: string | null;
@@ -30,6 +31,7 @@ export interface AppUser {
 export interface UserInput {
   full_name: string;
   email: string;
+  mobile: string;
   role: Role;
   organization_id: string | null;
   active: boolean;
@@ -41,7 +43,7 @@ export interface UserInput {
 }
 
 const USER_COLUMNS =
-  'id, user_id, organization_id, full_name, email, role, active, last_login_at, ' +
+  'id, user_id, organization_id, full_name, email, mobile, role, active, last_login_at, ' +
   'email_notifications, notify_hearing_reminder, notify_task_assignment, ' +
   'notify_daily_cause_list, notify_case_assignment, created_at, ' +
   'organization:organizations(*)';
@@ -66,44 +68,98 @@ export async function fetchUsers(actorRole: Role | null | undefined, orgId: stri
   return (data ?? []) as unknown as AppUser[];
 }
 
-function toPayload(input: Partial<UserInput>) {
-  const payload: Record<string, unknown> = {};
-  if (input.full_name !== undefined) payload.full_name = input.full_name.trim();
-  if (input.email !== undefined) payload.email = input.email.trim().toLowerCase();
-  if (input.role !== undefined) payload.role = input.role;
-  if (input.organization_id !== undefined) payload.organization_id = input.organization_id;
-  if (input.active !== undefined) payload.active = input.active;
-  if (input.email_notifications !== undefined) payload.email_notifications = input.email_notifications;
-  if (input.notify_hearing_reminder !== undefined) payload.notify_hearing_reminder = input.notify_hearing_reminder;
-  if (input.notify_task_assignment !== undefined) payload.notify_task_assignment = input.notify_task_assignment;
-  if (input.notify_daily_cause_list !== undefined) payload.notify_daily_cause_list = input.notify_daily_cause_list;
-  if (input.notify_case_assignment !== undefined) payload.notify_case_assignment = input.notify_case_assignment;
-  return payload;
+export interface CreateUserResult {
+  userId: string;
+  temporaryPassword: string;
 }
 
 /**
- * Invite / create a user profile. Note: full auth provisioning (password, SSO,
- * Entra ID) is handled separately — this records the user in `profiles` so they
- * are recognised on first sign-in. Designed to be swapped for an invite flow.
+ * Invoke the secure `admin-users` Edge Function. The function is the ONLY place
+ * privileged operations run (it holds the service-role key) and it enforces
+ * role/organisation permissions on the server. This helper unwraps both the
+ * transport-level errors and the JSON `{ error }` body the function returns.
  */
-export async function createUser(input: UserInput): Promise<void> {
-  const { error } = await supabase.from('profiles').insert(toPayload(input));
-  if (error) throw new Error(error.message);
+async function invokeAdmin<T = { success: true }>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke('admin-users', { body });
+
+  if (error) {
+    let message = error.message;
+    // supabase-js wraps non-2xx responses in a FunctionsHttpError whose JSON
+    // body carries the friendly message we returned from the function.
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      try {
+        const payload = await ctx.json();
+        if (payload?.error) message = payload.error;
+      } catch {
+        /* fall back to the transport error message */
+      }
+    }
+    throw new Error(friendlyError(message));
+  }
+
+  if (data && (data as { error?: string }).error) {
+    throw new Error(friendlyError((data as { error: string }).error));
+  }
+  return data as T;
+}
+
+function friendlyError(message: string): string {
+  if (/Failed to (send|fetch)|NetworkError|Failed to fetch/i.test(message)) {
+    return 'Could not reach the user service. Ensure the admin-users Edge Function is deployed.';
+  }
+  return message;
+}
+
+/**
+ * Create a fully provisioned user: Supabase Auth account + profile (+ advocate
+ * directory entry). Returns a one-time temporary password to share securely.
+ */
+export async function createUser(input: UserInput): Promise<CreateUserResult> {
+  return invokeAdmin<CreateUserResult>({
+    action: 'create',
+    full_name: input.full_name.trim(),
+    email: input.email.trim().toLowerCase(),
+    mobile: input.mobile.trim(),
+    role: input.role,
+    organization_id: input.organization_id,
+    notifications: {
+      email_notifications: input.email_notifications,
+      notify_hearing_reminder: input.notify_hearing_reminder,
+      notify_task_assignment: input.notify_task_assignment,
+      notify_daily_cause_list: input.notify_daily_cause_list,
+      notify_case_assignment: input.notify_case_assignment,
+    },
+  });
 }
 
 export async function updateUser(id: string, patch: Partial<UserInput>): Promise<void> {
-  const { error } = await supabase.from('profiles').update(toPayload(patch)).eq('id', id);
-  if (error) throw new Error(error.message);
+  const body: Record<string, unknown> = { action: 'update', profile_id: id };
+  if (patch.full_name !== undefined) body.full_name = patch.full_name.trim();
+  if (patch.email !== undefined) body.email = patch.email.trim().toLowerCase();
+  if (patch.mobile !== undefined) body.mobile = patch.mobile.trim();
+  if (patch.role !== undefined) body.role = patch.role;
+  if (patch.organization_id !== undefined) body.organization_id = patch.organization_id;
+  if (patch.active !== undefined) body.active = patch.active;
+  if (patch.email_notifications !== undefined) body.email_notifications = patch.email_notifications;
+  if (patch.notify_hearing_reminder !== undefined) body.notify_hearing_reminder = patch.notify_hearing_reminder;
+  if (patch.notify_task_assignment !== undefined) body.notify_task_assignment = patch.notify_task_assignment;
+  if (patch.notify_daily_cause_list !== undefined) body.notify_daily_cause_list = patch.notify_daily_cause_list;
+  if (patch.notify_case_assignment !== undefined) body.notify_case_assignment = patch.notify_case_assignment;
+  await invokeAdmin(body);
 }
 
 export async function setUserActive(id: string, active: boolean): Promise<void> {
-  const { error } = await supabase.from('profiles').update({ active }).eq('id', id);
-  if (error) throw new Error(error.message);
+  await invokeAdmin({ action: 'set_status', profile_id: id, active });
 }
 
-export async function deleteUser(id: string): Promise<void> {
-  const { error } = await supabase.from('profiles').delete().eq('id', id);
-  if (error) throw new Error(error.message);
+/** Issue a new one-time temporary password for an existing user. */
+export async function resetUserPassword(id: string): Promise<string> {
+  const res = await invokeAdmin<{ temporaryPassword: string }>({
+    action: 'reset_password',
+    profile_id: id,
+  });
+  return res.temporaryPassword;
 }
 
 // ── Notification preferences (current user, self-service) ─────────────────────
