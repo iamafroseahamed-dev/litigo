@@ -62,11 +62,11 @@ const EMPTY_FORM: FormData = {
 };
 
 interface Filters {
-  district: string; section: string;
+  district: string; section: string; case_type: string;
   cla_party_status: string; sensitivity: string;
   case_status: string; follow_up_status: string; active: string;
 }
-const EMPTY_FILTERS: Filters = { district: '', section: '', cla_party_status: '', sensitivity: '', case_status: '', follow_up_status: '', active: '' };
+const EMPTY_FILTERS: Filters = { district: '', section: '', case_type: '', cla_party_status: '', sensitivity: '', case_status: '', follow_up_status: '', active: '' };
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
@@ -635,6 +635,7 @@ export default function CasesPage() {
       const matchFilters =
         (!filters.district || (c.district ?? '').toLowerCase().includes(filters.district.toLowerCase())) &&
         (!filters.section || (c.section ?? '').toLowerCase().includes(filters.section.toLowerCase())) &&
+        (!filters.case_type || (c.case_type || deriveCaseType(c.case_number) || '') === filters.case_type) &&
         (!filters.cla_party_status || c.cla_party_status === filters.cla_party_status) &&
         (!filters.sensitivity || c.sensitivity === filters.sensitivity) &&
         (!filters.case_status || c.case_status === filters.case_status) &&
@@ -994,6 +995,7 @@ export default function CasesPage() {
                 <TableRow>
                   <TableHead className="w-36">Case No.</TableHead>
                   <TableHead className="w-36">CNR</TableHead>
+                  <TableHead className="w-32">Case Type</TableHead>
                   <TableHead className="w-40">Court</TableHead>
                   <TableHead className="w-28">District</TableHead>
                   <TableHead className="w-28">Section</TableHead>
@@ -1014,6 +1016,7 @@ export default function CasesPage() {
                   <TableRow key={c.id} className={!c.active ? 'opacity-55' : ''}>
                     <TableCell className="font-mono text-xs font-semibold text-foreground">{c.case_number}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{c.cnr_number || '—'}</TableCell>
+                    <TableCell className="text-xs">{c.case_type || deriveCaseType(c.case_number) || '—'}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{c.court_name || '—'}</TableCell>
                     <TableCell className="text-xs">{c.district || '—'}</TableCell>
                     <TableCell className="text-xs">{c.section || '—'}</TableCell>
