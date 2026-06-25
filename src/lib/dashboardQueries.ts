@@ -332,6 +332,9 @@ export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<Ex
 
   const cases = (casesRes.data ?? []) as CaseRow[];
   const listings = (listingsRes.data ?? []) as ListingRow[];
+  if (import.meta.env.DEV) {
+    console.log('[Dashboard] executive-analytics', { orgId: orgId ?? null, scoped: !!scopedFilter, cases: cases.length, listings: listings.length });
+  }
   const caseIds = new Set(cases.map(c => c.id));
 
   const tasks = caseIds.size === 0

@@ -85,10 +85,10 @@ function StatCard({ label, value, accent, loading }: { label: string; value: num
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { org } = useOrg();
+  const { orgId, isPlatformAdmin } = useOrg();
   const exec = useQuery({
-    queryKey: ['executive-analytics', org?.id ?? null],
-    queryFn: () => fetchExecutiveAnalytics(org?.id ?? null),
+    queryKey: ['executive-analytics', orgId, isPlatformAdmin],
+    queryFn: () => fetchExecutiveAnalytics(isPlatformAdmin ? null : orgId),
   });
 
   const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null);

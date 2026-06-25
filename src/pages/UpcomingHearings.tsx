@@ -57,8 +57,7 @@ function HearingDateBadge({ iso }: { iso: string | null | undefined }) {
 
 export default function UpcomingHearingsPage() {
   const today = useMemo(() => isoToday(), []);
-  const { org } = useOrg();
-  const orgId = org?.id ?? null;
+  const { orgId, isPlatformAdmin } = useOrg();
 
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsNumber, setDetailsNumber] = useState<string | null>(null);
@@ -71,16 +70,19 @@ export default function UpcomingHearingsPage() {
   const [taskHearingDate, setTaskHearingDate] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['upcoming-hearings', today, orgId],
+    queryKey: ['upcoming-hearings', today, orgId, isPlatformAdmin],
     queryFn: async (): Promise<Case[]> => {
       let query = supabase
         .from('cases')
         .select('*')
         .gte('next_hearing_date', today)
         .order('next_hearing_date', { ascending: true, nullsFirst: false });
-      if (orgId) query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
+      if (!isPlatformAdmin && orgId) query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
       const { data, error: sbErr } = await query;
       if (sbErr) throw new Error(sbErr.message);
+      if (import.meta.env.DEV) {
+        console.log('[UpcomingHearings] load', { orgId, isPlatformAdmin, returned: (data ?? []).length });
+      }
       return (data ?? []) as Case[];
     },
   });
