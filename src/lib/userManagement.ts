@@ -162,6 +162,45 @@ export async function resetUserPassword(id: string): Promise<string> {
   return res.temporaryPassword;
 }
 
+// ── Audit log ─────────────────────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: string;
+  organization_id: string | null;
+  actor_email: string | null;
+  action: string;
+  target_type: string | null;
+  target_email: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+/**
+ * Read the administrative audit trail. RLS (migration 019) limits rows to the
+ * caller's organisation unless they are a platform admin. The org filter here is
+ * a convenience; the real boundary is enforced in the database.
+ */
+export async function fetchAuditLogs(
+  actorRole: Role | null | undefined,
+  orgId: string | null,
+  limit = 100,
+): Promise<AuditLogEntry[]> {
+  let query = supabase
+    .from('audit_logs')
+    .select('id, organization_id, actor_email, action, target_type, target_email, metadata, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (!isPlatformAdmin(actorRole)) {
+    if (!orgId) return [];
+    query = query.eq('organization_id', orgId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as AuditLogEntry[];
+}
+
 // ── Notification preferences (current user, self-service) ─────────────────────
 
 export interface NotificationPrefs {
