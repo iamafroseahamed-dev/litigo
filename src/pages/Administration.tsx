@@ -1154,12 +1154,10 @@ export default function Administration() {
   }, []);
 
   const visibleModules = useMemo(() => ADMIN_MODULES.filter(m => m.visible(actorRole)), [actorRole]);
-
-  useEffect(() => {
-    if (visibleModules.length && !visibleModules.some(m => m.key === active)) {
-      setActive(visibleModules[0].key);
-    }
-  }, [visibleModules, active]);
+  // Derive the effective module during render so we never hold a key the current
+  // role can't see (avoids a corrective setState-in-effect / cascading render).
+  const current = visibleModules.find(m => m.key === active) ?? visibleModules[0];
+  const activeKey: ModuleKey = current?.key ?? 'dashboard';
 
   if (!canAccessAdministration(actorRole)) {
     return (
@@ -1174,7 +1172,7 @@ export default function Administration() {
   }
 
   function renderModule() {
-    switch (active) {
+    switch (activeKey) {
       case 'users': return <UsersTab actorRole={actorRole} orgId={orgId} organizations={organizations} />;
       case 'advocates': return <AdvocatesTab actorRole={actorRole} orgId={orgId} />;
       case 'roles': return <RolesPermissionsModule actorRole={actorRole} orgId={orgId} />;
@@ -1214,7 +1212,7 @@ export default function Administration() {
                 <div key={group} className="flex gap-1 lg:flex-col lg:gap-0.5">
                   <p className="hidden px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground lg:block">{group}</p>
                   {items.map(m => {
-                    const selected = active === m.key;
+                    const selected = activeKey === m.key;
                     return (
                       <button
                         key={m.key}
