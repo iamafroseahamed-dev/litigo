@@ -6,16 +6,19 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Briefcase, List,
-  CalendarDays, ShieldCheck, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu, Info, Upload,
+  CalendarDays, ShieldCheck, Scale, LogOut, ChevronLeft, ChevronRight, X, Menu, Info, Upload, Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { isPlatformAdmin, normalizeRole } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import { OrgCreditWidget } from '@/components/OrgCreditWidget';
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 
-const NAV_GROUPS: { heading: string; items: { to: string; label: string; icon: typeof LayoutDashboard }[] }[] = [
+type NavGroup = { heading: string; items: { to: string; label: string; icon: typeof LayoutDashboard }[] };
+
+const NAV_GROUPS: NavGroup[] = [
   {
     heading: 'Overview',
     items: [
@@ -39,6 +42,18 @@ const NAV_GROUPS: { heading: string; items: { to: string; label: string; icon: t
     ],
   },
 ];
+
+// Platform-admin-only navigation (organisation governance).
+const PLATFORM_NAV_GROUP: NavGroup = {
+  heading: 'Platform',
+  items: [
+    { to: '/organizations', label: 'Organizations', icon: Building2 },
+  ],
+};
+
+function navGroupsForRole(role: string | null | undefined): NavGroup[] {
+  return isPlatformAdmin(normalizeRole(role as never)) ? [...NAV_GROUPS, PLATFORM_NAV_GROUP] : NAV_GROUPS;
+}
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard':       'Dashboard',
