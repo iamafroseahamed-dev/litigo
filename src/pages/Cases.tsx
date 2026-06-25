@@ -169,6 +169,20 @@ function CaseForm({ initial, advocates, orgId, onSave, onCancel, saving }: {
           <Field label="CNR Number">
             <Input placeholder="TNHC0010002024" value={form.cnr_number ?? ''} onChange={txt('cnr_number')} />
           </Field>
+          <Field label="Case Type">
+            <Input
+              placeholder={derivedCaseType ? `Auto: ${derivedCaseType}` : 'e.g. Writ Petition'}
+              value={form.case_type ?? ''}
+              onChange={txt('case_type')}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {form.case_type
+                ? 'Manual override.'
+                : derivedCaseType
+                  ? `Auto-derived as “${derivedCaseType}”. Leave blank to keep automatic.`
+                  : 'Derived from the case number prefix.'}
+            </p>
+          </Field>
         </div>
       </div>
 

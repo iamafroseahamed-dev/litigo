@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { deriveCaseType } from '@/lib/caseType';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -528,6 +529,16 @@ export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<Ex
   }
   const sections = topN(sectionMap, 12);
 
+  // ── Case types (derive a fallback for any row not yet backfilled) ──
+  const caseTypeMap = new Map<string, number>();
+  for (const c of cases) {
+    const key = (c.case_type ?? '').trim() || deriveCaseType(c.case_number) || 'Unspecified';
+    caseTypeMap.set(key, (caseTypeMap.get(key) ?? 0) + 1);
+  }
+  const caseTypes = Array.from(caseTypeMap.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
   // ── Advocate status distribution ──
   const advStatusMap = new Map<string, number>();
   for (const c of cases) {
@@ -740,6 +751,7 @@ export async function fetchExecutiveAnalytics(orgId?: string | null): Promise<Ex
     districts,
     districtDetails,
     sections,
+    caseTypes,
     sectionAdvocates,
     advocates,
     leaderboard,
