@@ -1123,7 +1123,7 @@ export default function CasesPage() {
           <CaseForm
             initial={dialogMode === 'edit' && selected ? { ...selected } as FormData : EMPTY_FORM}
             advocates={advocates}
-            orgId={orgId}
+            orgId={formOrgId}
             onSave={handleSave}
             onCancel={() => setDialogMode(null)}
             saving={saving}
