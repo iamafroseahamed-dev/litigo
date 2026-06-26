@@ -119,6 +119,8 @@ export interface ExecKpis {
   pendingCases: number;
   disposedCases: number;
   activeCases: number;
+  urgentHearings7: number;
+  updateRequired: number;
   sensitiveCases: number;
   claPartyCases: number;
   casesListedToday: number;
@@ -136,16 +138,51 @@ export interface ExecKpis {
   todaysCauseListMatches: number;
   apiCallsToday: number;
   apiCreditsRemaining: number;
+  averageDisposalDays: number;
+  caseSuccessRate: number;
+  totalAdvocates: number;
 }
 
 export interface DashboardFilters {
+  organizationId?: string;
   district?: string;
   court?: string;
+  section?: string;
   caseType?: string;
   caseStatus?: string;
   advocate?: string;
+  claParty?: string;
+  sensitive?: string;
   dateFrom?: string;
   dateTo?: string;
+}
+
+export interface KpiTrend {
+  current: number;
+  previous: number;
+  deltaPct: number;
+  sparkline: number[];
+}
+
+export interface KpiTrends {
+  totalCases: KpiTrend;
+  pendingCases: KpiTrend;
+  disposedCases: KpiTrend;
+  upcomingHearings30: KpiTrend;
+  urgentHearings7: KpiTrend;
+  activeCases: KpiTrend;
+  updateRequired: KpiTrend;
+  claPartyCases: KpiTrend;
+  sensitiveCases: KpiTrend;
+  totalAdvocates: KpiTrend;
+  averageDisposalDays: KpiTrend;
+  caseSuccessRate: KpiTrend;
+}
+
+export interface CategoryPct {
+  label: string;
+  value: number;
+  percent: number;
 }
 
 export interface ApiDailyUsage {
@@ -157,6 +194,17 @@ export interface OrgCaseBreakdown {
   organizationId: string;
   label: string;
   cases: number;
+}
+
+export interface OrganizationAnalyticsRow {
+  organizationId: string;
+  label: string;
+  totalCases: number;
+  pendingCases: number;
+  disposedCases: number;
+  creditsRemaining: number;
+  advocates: number;
+  users: number;
 }
 
 export interface TaskProgress {
@@ -196,12 +244,33 @@ export interface DistrictDetail {
 export interface AdvocatePerformance {
   advocate: string;
   assignedCases: number;
+  pendingCases: number;
   readyForHearing: number;
   documentsAwaited: number;
   counterPending: number;
   hearingsThisMonth: number;
   upcomingHearings: number;
   disposedCases: number;
+  successRate: number;
+  averageDisposalDays: number;
+}
+
+export interface AdvocateWorkloadRow {
+  advocate: string;
+  pending: number;
+  disposed: number;
+  upcoming: number;
+}
+
+export interface MatrixRow {
+  row: string;
+  values: Record<string, number>;
+}
+
+export interface CourtCaseTypeCell {
+  court: string;
+  caseType: string;
+  value: number;
 }
 
 export interface SectionAdvocateRow {
@@ -221,11 +290,15 @@ export interface TaskAssigneePerformance {
 export interface UpcomingHearingRow {
   caseId: string;
   caseNumber: string | null;
+  court: string | null;
+  judge: string | null;
+  district: string | null;
   advocate: string | null;
   hearingDate: string | null;
   openTasks: number;
   status: string | null;
   advocateStatus: string | null;
+  vcLink: string | null;
   priority: 'High' | 'Medium' | 'Low';
 }
 
@@ -271,12 +344,18 @@ export interface AiCaseSnapshot {
 
 export interface ExecutiveAnalytics {
   kpis: ExecKpis;
+  kpiTrends: KpiTrends;
   districts: DistrictLitigation[];
   districtDetails: Record<string, DistrictDetail>;
   sections: CategoryCount[];
   caseTypes: CategoryCount[];
+  caseTypeBreakdown: CategoryPct[];
   sectionAdvocates: SectionAdvocateRow[];
   advocates: AdvocatePerformance[];
+  advocateWorkload: AdvocateWorkloadRow[];
+  advocateCaseTypeMatrix: MatrixRow[];
+  advocateSectionMatrix: MatrixRow[];
+  courtCaseTypeHeatmap: CourtCaseTypeCell[];
   leaderboard: AdvocatePerformance[];
   taskAssignees: TaskAssigneePerformance[];
   upcomingHearings: UpcomingHearingRow[];
@@ -284,18 +363,24 @@ export interface ExecutiveAnalytics {
   connectedTotal: number;
   causeList: CauseListAnalytics;
   trend: TrendPoint[];
+  filingTrend24: TrendPoint[];
+  disposalBreakdown: CategoryCount[];
   advocateStatusDistribution: CategoryCount[];
   aiCases: AiCaseSnapshot[];
   courts: CategoryCount[];
   taskProgress: TaskProgress;
   apiDailyCalls: ApiDailyUsage[];
   orgCases: OrgCaseBreakdown[];
+  organizationAnalytics: OrganizationAnalyticsRow[];
   filterMeta: {
     districts: string[];
     courts: string[];
+    sections: string[];
     caseTypes: string[];
     statuses: string[];
     advocates: string[];
+    claParty: string[];
+    sensitive: string[];
   };
 }
 
@@ -308,6 +393,8 @@ interface CaseRow {
   section: string | null;
   case_status: string | null;
   case_type: string | null;
+  follow_up_status: string | null;
+  nature_of_disposal: string | null;
   advocate_status: string | null;
   next_hearing_date: string | null;
   assigned_advocate_name: string | null;
@@ -329,8 +416,12 @@ interface TaskRow {
 }
 
 interface ListingRow {
+  case_id: string | null;
+  case_number: string | null;
   court_hall: string | null;
   judge_name: string | null;
+  stage: string | null;
+  vc_link: string | null;
   listed_date: string | null;
 }
 
