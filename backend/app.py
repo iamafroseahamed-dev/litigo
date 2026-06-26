@@ -1,5 +1,7 @@
 import base64
 from datetime import date, datetime, timedelta
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -17,7 +19,7 @@ from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
@@ -28,6 +30,8 @@ class Settings(BaseSettings):
     DATABASE_URL: Optional[str] = None
     SUPABASE_URL: str = ''
     SUPABASE_SERVICE_ROLE_KEY: str = ''
+    SUPABASE_JWT_SECRET: str = ''
+    PLATFORM_ADMIN_EMAIL: str = 'iamafroseahamed@gmail.com'
     MHC_TIMEOUT_SECONDS: int = 60  # read timeout; connect timeout is fixed at 10s
 
     class Config:
@@ -234,10 +238,21 @@ class ExtractPdfTextRequest(BaseModel):
 
 
 @app.get('/api/matched-listings')
-def get_matched_listings() -> List[Dict[str, Any]]:
+def get_matched_listings(authorization: Optional[str] = Header(default=None)) -> List[Dict[str, Any]]:
+    ctx = get_auth_context(authorization)
+    if 'cases:read' not in ROLE_PERMISSIONS.get(ctx.role, set()):
+        raise HTTPException(status_code=403, detail='Permission denied (cases:read).')
     today = date.today().isoformat()
 
     if settings.DATABASE_URL:
+        org_clause = ''
+        params: List[Any] = [today]
+        if ctx.role != 'platform_admin':
+            if not ctx.organization_id:
+                raise HTTPException(status_code=403, detail='No organization assigned to this account.')
+            org_clause = ' AND c.organization_id = %s '
+            params.append(ctx.organization_id)
+
         query = '''
             SELECT
                 d.id,
@@ -257,14 +272,17 @@ def get_matched_listings() -> List[Dict[str, Any]]:
             WHERE d.cause_date = (SELECT MAX(cause_date) FROM daily_cause_list WHERE cause_date <= %s)
               AND d.court_name = 'Madras High Court'
               AND d.bench = 'Chennai'
+              {org_clause}
             ORDER BY d.court_hall ASC, d.item_number ASC
-        '''
+        '''.format(org_clause=org_clause)
 
         try:
             with psycopg.connect(settings.DATABASE_URL, autocommit=True) as conn:
                 with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                    cur.execute(query, (today,))
-                    return cur.fetchall()
+                    cur.execute(query, tuple(params))
+                    rows = cur.fetchall()
+                    _audit_log(ctx, 'matched_listings_viewed', meta={'count': len(rows)})
+                    return rows
         except Exception as exc:
             raise HTTPException(status_code=500, detail='Unable to load matched listings.') from exc
 
@@ -318,10 +336,13 @@ def get_matched_listings() -> List[Dict[str, Any]]:
                 break
             offset += page_size
 
+        org_filter = _scope_org_filter(ctx)
         cases_url = (
             f"{settings.SUPABASE_URL}/rest/v1/cases"
             "?select=cnr_number,case_number,advocate_name,client_name&limit=1000&offset=0"
         )
+        if org_filter:
+            cases_url += f'&{org_filter}'
         cases_resp = requests.get(
             cases_url,
             headers={
@@ -355,6 +376,7 @@ def get_matched_listings() -> List[Dict[str, Any]]:
                     'client_name': match.get('client_name'),
                 })
 
+        _audit_log(ctx, 'matched_listings_viewed', meta={'count': len(matched_rows)})
         return matched_rows
     except requests.RequestException as exc:
         raise HTTPException(status_code=500, detail='Unable to load matched listings.') from exc
@@ -372,6 +394,186 @@ _SB_COLS = (
     'cnr_number,petitioner,respondent,party_names,judge_name,'
     'last_hearing_or_stage,counsel_name'
 )
+
+ROLE_PERMISSIONS: Dict[str, Set[str]] = {
+    'platform_admin': {
+        'cases:read',
+        'cases:manage',
+        'cases:sync',
+        'cause-list:read',
+        'notifications:send',
+        'ai:analyze',
+        'ai:orders',
+    },
+    'super_admin': {
+        'cases:read',
+        'cases:manage',
+        'cases:sync',
+        'cause-list:read',
+        'notifications:send',
+        'ai:analyze',
+        'ai:orders',
+    },
+    'admin': {
+        'cases:read',
+        'cases:manage',
+        'cases:sync',
+        'cause-list:read',
+        'notifications:send',
+        'ai:analyze',
+        'ai:orders',
+    },
+    'advocate': {
+        'cases:read',
+        'cause-list:read',
+        'cases:sync',
+        'ai:analyze',
+        'ai:orders',
+    },
+    'viewer': {
+        'cases:read',
+        'cause-list:read',
+    },
+}
+
+
+def _normalize_role(role: Optional[str]) -> str:
+    r = (role or '').strip().lower()
+    if r == 'user' or not r:
+        return 'viewer'
+    if r not in ROLE_PERMISSIONS:
+        return 'viewer'
+    return r
+
+
+def _is_platform_admin(email: Optional[str], role: Optional[str]) -> bool:
+    expected = (settings.PLATFORM_ADMIN_EMAIL or '').strip().lower()
+    return _normalize_role(role) == 'platform_admin' and bool(email) and email.lower() == expected
+
+
+def _extract_bearer_token(authorization: Optional[str]) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail='Missing Authorization header.')
+    parts = authorization.split(' ', 1)
+    if len(parts) != 2 or parts[0].lower() != 'bearer' or not parts[1].strip():
+        raise HTTPException(status_code=401, detail='Invalid Authorization header.')
+    return parts[1].strip()
+
+
+def _verify_jwt(token: str) -> Dict[str, Any]:
+    if not settings.SUPABASE_JWT_SECRET:
+        raise HTTPException(status_code=503, detail='SUPABASE_JWT_SECRET is not configured on the backend.')
+
+    def _b64url_decode(data: str) -> bytes:
+        padding = '=' * (-len(data) % 4)
+        return base64.urlsafe_b64decode((data + padding).encode('utf-8'))
+
+    parts = token.split('.')
+    if len(parts) != 3:
+        raise HTTPException(status_code=401, detail='Invalid auth token format.')
+    header_b64, payload_b64, signature_b64 = parts
+
+    signing_input = f'{header_b64}.{payload_b64}'.encode('utf-8')
+    expected_sig = hmac.new(
+        settings.SUPABASE_JWT_SECRET.encode('utf-8'),
+        signing_input,
+        hashlib.sha256,
+    ).digest()
+    try:
+        supplied_sig = _b64url_decode(signature_b64)
+        if not hmac.compare_digest(expected_sig, supplied_sig):
+            raise HTTPException(status_code=401, detail='Invalid or expired auth token.')
+
+        header = json.loads(_b64url_decode(header_b64).decode('utf-8'))
+        if (header or {}).get('alg') != 'HS256':
+            raise HTTPException(status_code=401, detail='Unsupported auth token algorithm.')
+
+        payload = json.loads(_b64url_decode(payload_b64).decode('utf-8'))
+        exp = payload.get('exp')
+        if exp is not None and datetime.utcnow().timestamp() >= float(exp):
+            raise HTTPException(status_code=401, detail='Invalid or expired auth token.')
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=401, detail='Invalid or expired auth token.') from exc
+    return payload
+
+
+def _sb_get_profile(user_id: str) -> Dict[str, Any]:
+    url = (
+        f'{settings.SUPABASE_URL}/rest/v1/profiles'
+        '?select=id,user_id,organization_id,role,email,full_name,active'
+        f'&user_id=eq.{user_id}&limit=1'
+    )
+    resp = requests.get(url, headers=_SB_HEADERS, timeout=30)
+    resp.raise_for_status()
+    rows = resp.json() or []
+    if not rows:
+        raise HTTPException(status_code=401, detail='User profile not found.')
+    row = rows[0]
+    if row.get('active') is False:
+        raise HTTPException(status_code=403, detail='Your account is disabled.')
+    return row
+
+
+class AuthContext(BaseModel):
+    user_id: str
+    email: str
+    role: str
+    organization_id: Optional[str] = None
+    profile_id: Optional[str] = None
+    full_name: Optional[str] = None
+
+
+def get_auth_context(authorization: Optional[str] = Header(default=None)) -> AuthContext:
+    token = _extract_bearer_token(authorization)
+    payload = _verify_jwt(token)
+    user_id = str(payload.get('sub') or '').strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail='Invalid token payload.')
+
+    profile = _sb_get_profile(user_id)
+    email = str(profile.get('email') or payload.get('email') or '').strip().lower()
+    role = _normalize_role(profile.get('role'))
+
+    # Strong platform-admin constraint: only one platform owner email is accepted.
+    if role == 'platform_admin' and not _is_platform_admin(email, role):
+        raise HTTPException(status_code=403, detail='Platform admin role is restricted to the configured owner account.')
+
+    return AuthContext(
+        user_id=user_id,
+        email=email,
+        role=role,
+        organization_id=profile.get('organization_id'),
+        profile_id=profile.get('id'),
+        full_name=profile.get('full_name'),
+    )
+
+def _scope_org_filter(ctx: AuthContext) -> str:
+    if ctx.role == 'platform_admin':
+        return ''
+    if not ctx.organization_id:
+        raise HTTPException(status_code=403, detail='No organization assigned to this account.')
+    return f'organization_id=eq.{ctx.organization_id}'
+
+
+def _audit_log(ctx: AuthContext, action: str, target: Optional[Dict[str, Any]] = None, meta: Optional[Dict[str, Any]] = None) -> None:
+    payload = {
+        'organization_id': ctx.organization_id,
+        'actor_profile_id': ctx.profile_id,
+        'actor_name': ctx.full_name or ctx.email,
+        'action': action,
+        'target_type': (target or {}).get('target_type'),
+        'target_id': (target or {}).get('target_id'),
+        'target_label': (target or {}).get('target_label'),
+        'meta': meta or {},
+        'created_at': datetime.utcnow().isoformat(),
+    }
+    try:
+        _sb_post('audit_logs', payload)
+    except Exception:
+        # Audit logging must never block primary requests.
+        pass
 
 
 def _supabase_fetch_today(cause_date_str: str) -> List[Dict[str, Any]]:
@@ -398,7 +600,10 @@ def _supabase_fetch_today(cause_date_str: str) -> List[Dict[str, Any]]:
 
 
 @app.get('/api/todays-cause-list')
-def get_todays_cause_list() -> JSONResponse:
+def get_todays_cause_list(authorization: Optional[str] = Header(default=None)) -> JSONResponse:
+    ctx = get_auth_context(authorization)
+    if 'cause-list:read' not in ROLE_PERMISSIONS.get(ctx.role, set()):
+        raise HTTPException(status_code=403, detail='Permission denied (cause-list:read).')
     """Serve cause list data from Supabase."""
     cause_date_str = date.today().isoformat()
     print(f'[cause-list] Reading from Supabase | date={cause_date_str}')
@@ -437,6 +642,7 @@ def get_todays_cause_list() -> JSONResponse:
         )
 
     print(f'[cause-list] Returned {len(rows)} rows')
+    _audit_log(ctx, 'todays_cause_list_viewed', meta={'count': len(rows), 'date': cause_date_str})
     return JSONResponse(
         content=rows,
         headers={'Cache-Control': 'no-store, no-cache, must-revalidate', 'Pragma': 'no-cache'},
@@ -1484,15 +1690,22 @@ def _send_email_resend(to_email: str, subject: str, body: str) -> Dict[str, Any]
 
 
 @app.post('/api/notifications/send-case-alert')
-def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
+def send_case_alert(
+    request: SendCaseAlertRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    ctx = get_auth_context(authorization)
+    if 'notifications:send' not in ROLE_PERMISSIONS.get(ctx.role, set()):
+        raise HTTPException(status_code=403, detail='Permission denied (notifications:send).')
     if not request.recipients:
         raise HTTPException(status_code=400, detail='No recipients specified.')
 
     # Load recipient details from Supabase
     recipient_ids = [r.recipient_id for r in request.recipients]
-    id_filter = ','.join(f'"{rid}"' for rid in recipient_ids)
     try:
         recs_raw = _sb_get(f'case_notification_recipients?id=in.({",".join(recipient_ids)})')
+        if ctx.role != 'platform_admin':
+            recs_raw = [r for r in recs_raw if r.get('organization_id') == ctx.organization_id]
         recs: Dict[str, Any] = {r['id']: r for r in recs_raw}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f'Failed to load recipients: {exc}') from exc
@@ -1575,6 +1788,13 @@ def send_case_alert(request: SendCaseAlertRequest) -> Dict[str, Any]:
         except Exception as exc:
             print(f'[notifications] Failed to write logs: {exc}')
 
+    _audit_log(
+        ctx,
+        'case_alert_sent',
+        target={'target_type': 'case', 'target_id': request.case_id, 'target_label': request.case_id},
+        meta={'sent': sent, 'failed': failed, 'recipient_count': len(request.recipients)},
+    )
+
     return {'success': True, 'sent': sent, 'failed': failed, 'logs': logs}
 
 
@@ -1606,7 +1826,13 @@ def _parse_case_components(case_number: str):
 
 
 @app.post('/api/mhc/case-status')
-def get_mhc_case_status(request: MhcCaseStatusRequest) -> JSONResponse:
+def get_mhc_case_status(
+    request: MhcCaseStatusRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    ctx = get_auth_context(authorization)
+    if 'cases:sync' not in ROLE_PERMISSIONS.get(ctx.role, set()):
+        raise HTTPException(status_code=403, detail='Permission denied (cases:sync).')
     """Call MHC viewstatus and return raw JSON including filename for PDF link."""
     parsed = _parse_case_components(request.case_number)
     if not parsed:
@@ -1640,6 +1866,12 @@ def get_mhc_case_status(request: MhcCaseStatusRequest) -> JSONResponse:
     for row in rows:
         fn = (row.get('filename') or '').strip()
         row['pdf_url'] = f'{MHC_VIEWPDF_BASE}/{fn}' if fn else None
+
+    _audit_log(
+        ctx,
+        'mhc_case_status_synced',
+        target={'target_type': 'case', 'target_id': request.case_number, 'target_label': request.case_number},
+    )
 
     return JSONResponse(content={
         'success': True,

@@ -33,6 +33,8 @@ import { deriveCaseType } from '@/lib/caseType';
 import { DEVELOPER_NAME, DEVELOPER_EMAIL } from '@/lib/appInfo';
 import { useAuth } from '@/lib/auth';
 import { useOrg } from '@/lib/orgContext';
+import { hasPermission } from '@/lib/access';
+import { apiFetch } from '@/lib/apiClient';
 import type { Case, Advocate } from '@/types';
 
 const COURTS = [
@@ -488,7 +490,11 @@ export default function CasesPage() {
   // Org id used when *creating* / bulk-assigning cases: prefer the canonical
   // filter id, else the resolved display org (covers platform admins).
   const formOrgId = orgId ?? org?.id ?? null;
-  const isAdmin = user?.profile?.role === 'admin';
+  const canManageCases = hasPermission(role, 'cases:manage');
+  const canSyncCases = hasPermission(role, 'cases:sync');
+  const canAssignCases = hasPermission(role, 'cases:assign');
+  const canCreateTasks = hasPermission(role, 'tasks:manage');
+  const canBulkAssign = hasPermission(role, 'cases:bulk-assign');
   const createdBy = user?.profile?.full_name || user?.email || 'Unknown';
 
   const loadConnCounts = useCallback(async () => {
@@ -568,6 +574,7 @@ export default function CasesPage() {
   useEffect(() => { loadTaskCounts(); }, [loadTaskCounts]);
 
   async function saveAssignment() {
+    if (!canAssignCases) { toast.error('You do not have permission to assign advocates.'); return; }
     if (!assignTarget) return;
     const adv = advocates.find(a => a.id === assignAdvocateId);
     if (!adv) { toast.error('Select an advocate.'); return; }
@@ -607,6 +614,7 @@ export default function CasesPage() {
 
   const [bulkAssigning, setBulkAssigning] = useState(false);
   async function bulkAssignUnassigned() {
+    if (!canBulkAssign) { toast.error('You do not have permission to bulk-assign cases.'); return; }
     if (!formOrgId) { toast.error('No organization to assign.'); return; }
     setBulkAssigning(true);
     try {
@@ -669,6 +677,10 @@ export default function CasesPage() {
   }
 
   const handleSave = async (data: FormData, extras: CaseFormExtras) => {
+    if (!canManageCases) {
+      toast.error('You do not have permission to create or edit cases.');
+      return;
+    }
     setSaving(true);
     const now = new Date().toISOString();
     try {
@@ -733,6 +745,7 @@ export default function CasesPage() {
   };
 
   const handleDeactivate = async () => {
+    if (!canManageCases) { toast.error('You do not have permission to deactivate cases.'); return; }
     if (!deactivateTarget) return;
     const { error: err } = await supabase.from('cases')
       .update({ active: false, follow_up_status: 'Inactive', updated_at: new Date().toISOString() })
@@ -746,6 +759,10 @@ export default function CasesPage() {
 
   // ── Fetch MHC order (via server-side proxy) ──────────────────────────────────
   async function fetchCaseDetails(caseRecord: Case) {
+    if (!canSyncCases) {
+      toast.error('You do not have permission to sync case details.');
+      return;
+    }
     const caseNumber = caseRecord.case_number;
     if (!caseNumber) return;
 
@@ -756,7 +773,7 @@ export default function CasesPage() {
     setOrderDetails(null);
 
     try {
-      const response = await fetch('/api/mhc/case-status', {
+      const response = await apiFetch('/api/mhc/case-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ case_number: caseNumber }),
@@ -808,7 +825,7 @@ export default function CasesPage() {
       {orgId && unassignedCount > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <span>{unassignedCount} case{unassignedCount !== 1 ? 's are' : ' is'} not yet assigned to an organization (still shown below).</span>
-          {isAdmin && (
+          {canBulkAssign && (
             <Button size="sm" variant="outline" className="h-8" disabled={bulkAssigning} onClick={bulkAssignUnassigned}>
               {bulkAssigning ? 'Assigning…' : `Assign to ${org?.short_name ?? org?.organization_name ?? 'organization'}`}
             </Button>
@@ -873,9 +890,11 @@ export default function CasesPage() {
               <Download className="w-4 h-4" /> Export Excel
             </Button>
           )}
-          <Button onClick={() => { setSelected(null); setDialogMode('add'); }} className="w-full sm:w-auto h-10">
-            <Plus className="w-4 h-4 mr-1" /> Add Case
-          </Button>
+          {canManageCases && (
+            <Button onClick={() => { setSelected(null); setDialogMode('add'); }} className="w-full sm:w-auto h-10">
+              <Plus className="w-4 h-4 mr-1" /> Add Case
+            </Button>
+          )}
         </div>
       </div>
 
@@ -995,7 +1014,7 @@ export default function CasesPage() {
               icon={Briefcase}
               title="No cases yet"
               description="Add your first case or upload case data to get started."
-              action={<Button size="sm" onClick={() => { setSelected(null); setDialogMode('add'); }}><Plus className="mr-1.5 h-4 w-4" />Add Case</Button>}
+              action={canManageCases ? <Button size="sm" onClick={() => { setSelected(null); setDialogMode('add'); }}><Plus className="mr-1.5 h-4 w-4" />Add Case</Button> : undefined}
               className="m-4"
             />
           ) : orgId && orgScoped.length === 0 ? (
@@ -1086,10 +1105,12 @@ export default function CasesPage() {
                           title="View Case" onClick={() => { setSelected(c); setDialogMode('view'); }}>
                           <Eye className="h-3.5 w-3.5" /> View
                         </Button>
-                        <Button size="sm" className="hidden h-8 gap-1 bg-orange-500 px-2.5 text-white hover:bg-orange-600 sm:inline-flex"
-                          title="Edit Case" onClick={() => { setSelected(c); setDialogMode('edit'); }}>
-                          <Edit2 className="h-3.5 w-3.5" /> Edit
-                        </Button>
+                        {canManageCases && (
+                          <Button size="sm" className="hidden h-8 gap-1 bg-orange-500 px-2.5 text-white hover:bg-orange-600 sm:inline-flex"
+                            title="Edit Case" onClick={() => { setSelected(c); setDialogMode('edit'); }}>
+                            <Edit2 className="h-3.5 w-3.5" /> Edit
+                          </Button>
+                        )}
 
                         {/* Secondary actions — labeled menu (also holds View/Edit on mobile) */}
                         <DropdownMenu>
@@ -1108,27 +1129,35 @@ export default function CasesPage() {
                               onClick={() => { setSelected(c); setDialogMode('view'); }}>
                               <Eye className="text-blue-600" /> View Case
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="sm:hidden text-orange-700"
-                              onClick={() => { setSelected(c); setDialogMode('edit'); }}>
-                              <Edit2 className="text-orange-500" /> Edit Case
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator className="sm:hidden" />
+                            {canManageCases && (
+                              <DropdownMenuItem className="sm:hidden text-orange-700"
+                                onClick={() => { setSelected(c); setDialogMode('edit'); }}>
+                                <Edit2 className="text-orange-500" /> Edit Case
+                              </DropdownMenuItem>
+                            )}
+                            {canManageCases && <DropdownMenuSeparator className="sm:hidden" />}
                             <DropdownMenuItem className="text-purple-700" disabled={!c.case_number}
                               onClick={() => { setCaseDetailsNumber(c.case_number); setCaseDetailsId(c.id); setCaseDetailsTab('overview'); setCaseDetailsOpen(true); }}>
                               <Scale className="text-purple-600" /> Case Details
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-green-700" disabled={!c.case_number}
-                              onClick={() => fetchCaseDetails(c)}>
-                              <RefreshCw className="text-green-600" /> Sync Case
-                            </DropdownMenuItem>
-                            <DropdownMenuItem className="text-indigo-700"
-                              onClick={() => setTaskCase(c)}>
-                              <ListPlus className="text-indigo-600" /> Create Task
-                            </DropdownMenuItem>
-                            <DropdownMenuItem className="text-teal-700"
-                              onClick={() => { setAssignTarget(c); setAssignAdvocateId(''); }}>
-                              <UserPlus className="text-teal-600" /> Assign Advocate
-                            </DropdownMenuItem>
+                            {canSyncCases && (
+                              <DropdownMenuItem className="text-green-700" disabled={!c.case_number}
+                                onClick={() => fetchCaseDetails(c)}>
+                                <RefreshCw className="text-green-600" /> Sync Case
+                              </DropdownMenuItem>
+                            )}
+                            {canCreateTasks && (
+                              <DropdownMenuItem className="text-indigo-700"
+                                onClick={() => setTaskCase(c)}>
+                                <ListPlus className="text-indigo-600" /> Create Task
+                              </DropdownMenuItem>
+                            )}
+                            {canAssignCases && (
+                              <DropdownMenuItem className="text-teal-700"
+                                onClick={() => { setAssignTarget(c); setAssignAdvocateId(''); }}>
+                                <UserPlus className="text-teal-600" /> Assign Advocate
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem className="text-amber-800" disabled={!c.case_number}
                               onClick={() => { setCaseDetailsNumber(c.case_number); setCaseDetailsId(c.id); setCaseDetailsTab('connected'); setCaseDetailsOpen(true); }}>
                               <Link2 className="text-amber-700" /> Connected Cases
@@ -1137,11 +1166,13 @@ export default function CasesPage() {
                               onClick={() => { setCaseDetailsNumber(c.case_number); setCaseDetailsId(c.id); setCaseDetailsTab('notes'); setCaseDetailsOpen(true); }}>
                               <StickyNote className="text-slate-500" /> Notes
                             </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-red-600 focus:text-red-700"
-                              onClick={() => setDeactivateTarget(c)}>
-                              <PowerOff className="text-red-500" /> Deactivate
-                            </DropdownMenuItem>
+                            {canManageCases && <DropdownMenuSeparator />}
+                            {canManageCases && (
+                              <DropdownMenuItem className="text-red-600 focus:text-red-700"
+                                onClick={() => setDeactivateTarget(c)}>
+                                <PowerOff className="text-red-500" /> Deactivate
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>

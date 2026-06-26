@@ -10,34 +10,41 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
-import { isPlatformAdmin, normalizeRole } from '@/lib/roles';
+import { hasPermission, type AppPermission } from '@/lib/access';
+import type { Role } from '@/types';
 import { Button } from '@/components/ui/button';
 import { OrgCreditWidget } from '@/components/OrgCreditWidget';
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 
-type NavGroup = { heading: string; items: { to: string; label: string; icon: typeof LayoutDashboard }[] };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  permission?: AppPermission;
+};
+type NavGroup = { heading: string; items: NavItem[] };
 
 const NAV_GROUPS: NavGroup[] = [
   {
     heading: 'Overview',
     items: [
-      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard:view' },
     ],
   },
   {
     heading: 'Litigation',
     items: [
-      { to: '/cases', label: 'Cases', icon: Briefcase },
-      { to: '/todays-listings', label: "Today's Listings", icon: List },
-      { to: '/upcoming-hearings', label: 'Upcoming Hearings', icon: CalendarDays },
+      { to: '/cases', label: 'Cases', icon: Briefcase, permission: 'cases:view' },
+      { to: '/todays-listings', label: "Today's Listings", icon: List, permission: 'hearings:view' },
+      { to: '/upcoming-hearings', label: 'Upcoming Hearings', icon: CalendarDays, permission: 'hearings:view' },
     ],
   },
   {
     heading: 'Workspace',
     items: [
-      { to: '/bulk-upload', label: 'Bulk Upload', icon: Upload },
-      { to: '/administration', label: 'Administration', icon: ShieldCheck },
+      { to: '/bulk-upload', label: 'Bulk Upload', icon: Upload, permission: 'bulk-upload:manage' },
+      { to: '/administration', label: 'Administration', icon: ShieldCheck, permission: 'administration:view' },
       { to: '/about', label: 'About', icon: Info },
     ],
   },
@@ -47,12 +54,18 @@ const NAV_GROUPS: NavGroup[] = [
 const PLATFORM_NAV_GROUP: NavGroup = {
   heading: 'Platform',
   items: [
-    { to: '/organizations', label: 'Organizations', icon: Building2 },
+    { to: '/organizations', label: 'Organizations', icon: Building2, permission: 'organizations:manage' },
   ],
 };
 
-function navGroupsForRole(role: string | null | undefined): NavGroup[] {
-  return isPlatformAdmin(normalizeRole(role as never)) ? [...NAV_GROUPS, PLATFORM_NAV_GROUP] : NAV_GROUPS;
+function navGroupsForRole(role: Role | null | undefined): NavGroup[] {
+  const allGroups = [...NAV_GROUPS, PLATFORM_NAV_GROUP];
+  return allGroups
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => !item.permission || hasPermission(role, item.permission)),
+    }))
+    .filter(group => group.items.length > 0);
 }
 
 const PAGE_TITLES: Record<string, string> = {

@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner';
 import { CaseDetailsModal } from '@/components/CaseDetailsModal';
 import { useOrg } from '@/lib/orgContext';
+import { apiFetch } from '@/lib/apiClient';
 import type { TodayMatchedListing } from '@/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -205,7 +206,7 @@ export default function TodaysListingsPage() {
 
     setOrderLoadingId(record.id);
     try {
-      const response = await fetch('/api/mhc/case-status', {
+      const response = await apiFetch('/api/mhc/case-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ case_number: caseNumber }),

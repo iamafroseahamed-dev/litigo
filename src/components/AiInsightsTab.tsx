@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
+import { apiFetch } from '@/lib/apiClient';
 import { getEcourtsCaseType } from '@/config/ecourtsCaseTypes';
 import { hasCredits, NO_CREDITS_MESSAGE, recordApiUsage } from '@/lib/organizations';
 import type { AiCaseAnalysisJson, AiActionPlanItem, CaseAiAnalysis, ParsedOrderRecord } from '@/types';
@@ -209,7 +210,7 @@ async function ensureCaseDetails(caseId: string, caseNumber: string | null, prov
   const ecourtsCaseType = getEcourtsCaseType(caseType);
   if (!caseNo || !caseYear) throw new Error('Case details cache is missing and the case number cannot be parsed for refresh.');
 
-  const response = await fetch('/api/case-details/search', {
+  const response = await apiFetch('/api/case-details/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ caseNo, caseYear, caseTypes: ecourtsCaseType }),
@@ -295,7 +296,7 @@ async function ensureParsedOrders(
   if (!number) return cached ?? null;
 
   try {
-    const resp = await fetch('/api/case-analysis/orders', {
+    const resp = await apiFetch('/api/case-analysis/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ caseNumber: number, limit: 8 }),
@@ -373,7 +374,7 @@ export function AiInsightsTab({ caseId, caseNumber, caseData }: { caseId: string
       const ordersChanged = parsedOrders !== (record?.parsed_orders ?? null);
       const context = { ...payload.context, parsedOrders: parsedOrders ?? [] };
 
-      const resp = await fetch('/api/case-analysis/sarvam', {
+      const resp = await apiFetch('/api/case-analysis/sarvam', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caseId, caseNumber: caseNumber ?? null, context }),

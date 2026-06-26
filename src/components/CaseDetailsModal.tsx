@@ -16,6 +16,7 @@ import { EcourtsHistoryTab } from '@/components/EcourtsHistoryTab';
 import { AiInsightsTab } from '@/components/AiInsightsTab';
 import { getEcourtsCaseType } from '@/config/ecourtsCaseTypes';
 import { deriveCaseType } from '@/lib/caseType';
+import { apiFetch } from '@/lib/apiClient';
 import { supabase } from '@/lib/supabase';
 import { advocateStatusClasses } from '@/lib/caseManagement';
 import {
@@ -184,7 +185,7 @@ async function fetchFromApi(caseNumber: string): Promise<CacheEntry | null> {
   let attempt = 0;
 
   while (true) {
-    const response = await fetch('/api/case-details/search', {
+      const response = await apiFetch('/api/case-details/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ caseNo, caseYear, caseTypes: ecourtsCaseType }),

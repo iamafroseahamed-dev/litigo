@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/lib/auth';
 import { OrgProvider } from '@/lib/orgContext';
-import { ProtectedRoute, PublicRoute } from '@/components/ProtectedRoute';
+import { ProtectedRoute, PublicRoute, RequirePermission } from '@/components/ProtectedRoute';
 import { Layout } from '@/components/Layout';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -59,14 +59,42 @@ export default function App() {
                 {/* Protected */}
                 <Route element={<ProtectedRoute />}>
                   <Route element={<Layout />}>
-                    <Route path="/dashboard"       element={<Dashboard />} />
-                    <Route path="/cases"           element={<Cases />} />
-                    <Route path="/todays-listings" element={<TodaysListings />} />
-                    <Route path="/upcoming-hearings" element={<UpcomingHearings />} />
-                    <Route path="/administration"  element={<Administration />} />
+                    <Route path="/dashboard" element={(
+                      <RequirePermission permission="dashboard:view">
+                        <Dashboard />
+                      </RequirePermission>
+                    )} />
+                    <Route path="/cases" element={(
+                      <RequirePermission permission="cases:view">
+                        <Cases />
+                      </RequirePermission>
+                    )} />
+                    <Route path="/todays-listings" element={(
+                      <RequirePermission permission="hearings:view">
+                        <TodaysListings />
+                      </RequirePermission>
+                    )} />
+                    <Route path="/upcoming-hearings" element={(
+                      <RequirePermission permission="hearings:view">
+                        <UpcomingHearings />
+                      </RequirePermission>
+                    )} />
+                    <Route path="/administration" element={(
+                      <RequirePermission permission="administration:view">
+                        <Administration />
+                      </RequirePermission>
+                    )} />
                     <Route path="/settings"        element={<Navigate to="/administration" replace />} />
-                    <Route path="/organizations"   element={<Organizations />} />
-                    <Route path="/bulk-upload"     element={<BulkUpload />} />
+                    <Route path="/organizations" element={(
+                      <RequirePermission permission="organizations:manage">
+                        <Organizations />
+                      </RequirePermission>
+                    )} />
+                    <Route path="/bulk-upload" element={(
+                      <RequirePermission permission="bulk-upload:manage">
+                        <BulkUpload />
+                      </RequirePermission>
+                    )} />
                     <Route path="/about"           element={<About />} />
                   </Route>
                 </Route>
