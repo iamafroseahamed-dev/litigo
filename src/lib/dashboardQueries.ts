@@ -136,6 +136,31 @@ export interface ExecKpis {
   todaysCauseListMatches: number;
   apiCallsToday: number;
   apiCreditsRemaining: number;
+  // Extended KPIs
+  urgentHearings7: number;
+  updateRequired: number;
+  totalAdvocates: number;
+  avgDisposalDays: number;
+  successRate: number;
+}
+
+export interface SparklinePoint { month: string; value: number; }
+
+export interface MatrixCell { rowKey: string; colKey: string; count: number; }
+
+export interface AdvocatePerformanceV2 {
+  advocate: string;
+  assignedCases: number;
+  pending: number;
+  active: number;
+  disposedCases: number;
+  upcomingHearings: number;
+  readyForHearing: number;
+  documentsAwaited: number;
+  counterPending: number;
+  hearingsThisMonth: number;
+  successRate: number;
+  avgDisposalDays: number;
 }
 
 export interface DashboardFilters {
@@ -296,7 +321,16 @@ export interface ExecutiveAnalytics {
     caseTypes: string[];
     statuses: string[];
     advocates: string[];
+    sections: string[];
   };
+  // Extended analytics
+  disposalDistribution: CategoryCount[];
+  advocateV2: AdvocatePerformanceV2[];
+  filingTrend24: TrendPoint[];
+  kpiSparklines: Record<string, SparklinePoint[]>;
+  kpiTrends: Record<string, number>;
+  advocateCaseTypeMatrix: MatrixCell[];
+  advocateSectionMatrix: MatrixCell[];
 }
 
 interface CaseRow {
@@ -310,9 +344,12 @@ interface CaseRow {
   case_type: string | null;
   advocate_status: string | null;
   next_hearing_date: string | null;
+  last_hearing_date: string | null;
   assigned_advocate_name: string | null;
   sensitivity: string | null;
   cla_party_status: string | null;
+  nature_of_disposal: string | null;
+  follow_up_status: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -360,7 +397,7 @@ function orgOrLegacyFilter(orgId?: string | null): string | null {
 
 export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: DashboardFilters): Promise<ExecutiveAnalytics> {
   let casesQuery = supabase.from('cases')
-    .select('id, organization_id, case_number, court_name, district, section, case_status, case_type, advocate_status, next_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, created_at, updated_at')
+    .select('id, organization_id, case_number, court_name, district, section, case_status, case_type, advocate_status, next_hearing_date, last_hearing_date, assigned_advocate_name, sensitivity, cla_party_status, nature_of_disposal, follow_up_status, created_at, updated_at')
     .range(0, PAGE);
   const scopedFilter = orgOrLegacyFilter(orgId);
   if (scopedFilter) casesQuery = casesQuery.or(scopedFilter);
@@ -412,6 +449,7 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
     caseTypes: Array.from(new Set(rawCases.map(c => ((c.case_type ?? '').trim() || deriveCaseType(c.case_number) || '').trim()).filter(Boolean))).sort(),
     statuses: Array.from(new Set(rawCases.map(c => (c.case_status ?? '').trim()).filter(Boolean))).sort(),
     advocates: Array.from(new Set(rawCases.map(c => (c.assigned_advocate_name ?? '').trim()).filter(Boolean))).sort(),
+    sections: Array.from(new Set(rawCases.map(c => (c.section ?? '').trim()).filter(Boolean))).sort(),
   };
   if (import.meta.env.DEV) {
     console.log('[Dashboard] executive-analytics', { orgId: orgId ?? null, scoped: !!scopedFilter, cases: cases.length, listings: listings.length });
@@ -484,6 +522,27 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
     todaysCauseListMatches: listings.filter(l => String(l.listed_date ?? '').slice(0, 10) === today).length,
     apiCallsToday: usageRows.filter(r => String(r.created_at ?? '').slice(0, 10) === today).length,
     apiCreditsRemaining: 0,
+    urgentHearings7: cases.filter(c => c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in7).length,
+    updateRequired: cases.filter(c => (c.follow_up_status ?? '').trim() === 'Update Required').length,
+    totalAdvocates: new Set(cases.map(c => (c.assigned_advocate_name ?? '').trim()).filter(Boolean)).size,
+    avgDisposalDays: (() => {
+      const disposed = cases.filter(c => isDisposed(c.case_status) && c.created_at && c.updated_at);
+      if (!disposed.length) return 0;
+      const total = disposed.reduce((s, c) => {
+        const days = Math.max(0, (new Date(String(c.updated_at)).getTime() - new Date(String(c.created_at)).getTime()) / 86400000);
+        return s + days;
+      }, 0);
+      return Math.round(total / disposed.length);
+    })(),
+    successRate: (() => {
+      const disposed = cases.filter(c => isDisposed(c.case_status)).length;
+      if (!disposed) return 0;
+      const allowed = cases.filter(c => {
+        const nd = (c.nature_of_disposal ?? '').toLowerCase();
+        return nd.includes('allow') || nd.includes('partly allow');
+      }).length;
+      return Math.round((allowed / disposed) * 100);
+    })(),
   };
 
   if (orgId) {
@@ -863,6 +922,118 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
     };
   });
 
+  // ── Filing trend 24 months ──
+  const months24: string[] = [];
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months24.push(localIso(d).slice(0, 7));
+  }
+  const trend24Map = new Map<string, TrendPoint>();
+  months24.forEach(m => {
+    const d = new Date(`${m}-01T00:00:00`);
+    trend24Map.set(m, { month: m, label: d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }), newCases: 0, casesDisposed: 0, hearings: 0, tasksCreated: 0, tasksCompleted: 0 });
+  });
+  for (const c of rawCases) {
+    const m = monthKey(c.created_at);
+    if (m && trend24Map.has(m)) { trend24Map.get(m)!.newCases += 1; if (isDisposed(c.case_status)) trend24Map.get(m)!.casesDisposed += 1; }
+  }
+  const filingTrend24 = months24.map(m => trend24Map.get(m)!);
+
+  // ── Disposal distribution ──
+  const disposalMap = new Map<string, number>();
+  for (const c of cases) {
+    const key = (c.nature_of_disposal ?? '').trim();
+    if (key) disposalMap.set(key, (disposalMap.get(key) ?? 0) + 1);
+  }
+  const disposalDistribution = Array.from(disposalMap.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  // ── Extended advocate performance (V2) ──
+  const advV2Map = new Map<string, { assigned: number; pending: number; active: number; disposed: number; upcoming: number; ready: number; docs: number; counter: number; hearings: number; allowedDisposed: number; disposalDaysTotal: number; disposalCount: number }>();
+  for (const c of cases) {
+    const name = (c.assigned_advocate_name ?? '').trim();
+    if (!name) continue;
+    let a = advV2Map.get(name);
+    if (!a) { a = { assigned: 0, pending: 0, active: 0, disposed: 0, upcoming: 0, ready: 0, docs: 0, counter: 0, hearings: 0, allowedDisposed: 0, disposalDaysTotal: 0, disposalCount: 0 }; advV2Map.set(name, a); }
+    a.assigned += 1;
+    if (isPending(c.case_status)) a.pending += 1;
+    if (isActive(c.case_status)) a.active += 1;
+    if (isDisposed(c.case_status)) {
+      a.disposed += 1;
+      const nd = (c.nature_of_disposal ?? '').toLowerCase();
+      if (nd.includes('allow') || nd.includes('partly allow')) a.allowedDisposed += 1;
+      if (c.created_at && c.updated_at) { const days = Math.max(0, (new Date(String(c.updated_at)).getTime() - new Date(String(c.created_at)).getTime()) / 86400000); a.disposalDaysTotal += days; a.disposalCount += 1; }
+    }
+    if (c.next_hearing_date && String(c.next_hearing_date) >= today && String(c.next_hearing_date) <= in30) a.upcoming += 1;
+    if (isReadyForHearing(c)) a.ready += 1;
+    if (isDocumentsAwaited(c)) a.docs += 1;
+    if (isCounterPending(c)) a.counter += 1;
+    if (c.next_hearing_date && String(c.next_hearing_date).slice(0, 7) === thisMonth) a.hearings += 1;
+  }
+  const advocateV2: AdvocatePerformanceV2[] = Array.from(advV2Map.entries())
+    .map(([advocate, a]) => ({
+      advocate,
+      assignedCases: a.assigned,
+      pending: a.pending,
+      active: a.active,
+      disposedCases: a.disposed,
+      upcomingHearings: a.upcoming,
+      readyForHearing: a.ready,
+      documentsAwaited: a.docs,
+      counterPending: a.counter,
+      hearingsThisMonth: a.hearings,
+      successRate: a.disposed > 0 ? Math.round((a.allowedDisposed / a.disposed) * 100) : 0,
+      avgDisposalDays: a.disposalCount > 0 ? Math.round(a.disposalDaysTotal / a.disposalCount) : 0,
+    }))
+    .sort((x, y) => y.assignedCases - x.assignedCases);
+
+  // ── KPI sparklines (last 12 months) ──
+  const kpiSparklines: Record<string, SparklinePoint[]> = {
+    totalCases: trend.map(t => ({ month: t.label, value: t.newCases })),
+    pending: trend.map(t => ({ month: t.label, value: t.newCases - t.casesDisposed })),
+    disposed: trend.map(t => ({ month: t.label, value: t.casesDisposed })),
+    hearings: trend.map(t => ({ month: t.label, value: t.hearings })),
+    tasks: trend.map(t => ({ month: t.label, value: t.tasksCreated })),
+  };
+
+  // ── KPI trends (% change last vs prev month) ──
+  const kpiTrends: Record<string, number> = {};
+  if (trend.length >= 2) {
+    const last = trend[trend.length - 1];
+    const prev = trend[trend.length - 2];
+    if (prev.newCases > 0) kpiTrends.totalCases = +((last.newCases - prev.newCases) / prev.newCases * 100).toFixed(1);
+    if (prev.casesDisposed > 0) kpiTrends.disposed = +((last.casesDisposed - prev.casesDisposed) / prev.casesDisposed * 100).toFixed(1);
+    if (prev.hearings > 0) kpiTrends.hearings = +((last.hearings - prev.hearings) / prev.hearings * 100).toFixed(1);
+  }
+
+  // ── Advocate × CaseType matrix ──
+  const actMap = new Map<string, Map<string, number>>();
+  for (const c of cases) {
+    const adv = (c.assigned_advocate_name ?? '').trim();
+    if (!adv) continue;
+    const ct = ((c.case_type ?? '').trim() || deriveCaseType(c.case_number) || 'Other').trim();
+    let inner = actMap.get(adv);
+    if (!inner) { inner = new Map(); actMap.set(adv, inner); }
+    inner.set(ct, (inner.get(ct) ?? 0) + 1);
+  }
+  const advocateCaseTypeMatrix: MatrixCell[] = [];
+  actMap.forEach((ctMap, adv) => ctMap.forEach((count, ct) => advocateCaseTypeMatrix.push({ rowKey: adv, colKey: ct, count })));
+
+  // ── Advocate × Section matrix ──
+  const asmMap = new Map<string, Map<string, number>>();
+  for (const c of cases) {
+    const adv = (c.assigned_advocate_name ?? '').trim();
+    if (!adv) continue;
+    const sec = (c.section ?? '').trim() || 'Unspecified';
+    let inner = asmMap.get(adv);
+    if (!inner) { inner = new Map(); asmMap.set(adv, inner); }
+    inner.set(sec, (inner.get(sec) ?? 0) + 1);
+  }
+  const advocateSectionMatrix: MatrixCell[] = [];
+  asmMap.forEach((secMap, adv) => secMap.forEach((count, sec) => advocateSectionMatrix.push({ rowKey: adv, colKey: sec, count })));
+
   return {
     kpis,
     districts,
@@ -885,6 +1056,13 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
     apiDailyCalls,
     orgCases,
     filterMeta,
+    disposalDistribution,
+    advocateV2,
+    filingTrend24,
+    kpiSparklines,
+    kpiTrends,
+    advocateCaseTypeMatrix,
+    advocateSectionMatrix,
   };
 }
 
