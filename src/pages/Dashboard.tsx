@@ -1,27 +1,37 @@
-import { useMemo, useState } from 'react';
+// ── Dashboard.tsx — Executive Analytics Dashboard ────────────────────────────
+// Redesigned: KPI sparklines, sticky filters, advocate matrices, comprehensive charts
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import * as XLSX from 'xlsx';
 import {
-  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
-  Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend,
+  Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Briefcase, Clock, CheckCircle2, Gavel, Users, CalendarClock,
-  Link2, CheckSquare, Cpu, RefreshCw, BarChart3,
+  ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarClock, CheckCircle2,
+  CheckSquare, Clock, Download, FileText, Filter, Gavel, Landmark,
+  Link2, RefreshCw, Scale, ShieldAlert, TrendingUp, Users, Zap,
 } from 'lucide-react';
-import { fetchExecutiveAnalytics, type DashboardFilters } from '@/lib/dashboardQueries';
+import {
+  fetchExecutiveAnalytics,
+  type DashboardFilters,
+  type SparklinePoint,
+  type AdvocatePerformanceV2,
+  type MatrixCell,
+} from '@/lib/dashboardQueries';
 import { TNDistrictMap } from '@/components/TNDistrictMap';
 import { DistrictDrawer } from '@/components/DistrictDrawer';
 import { useOrg } from '@/lib/orgContext';
 import { fetchOrganizations } from '@/lib/organizations';
 
-const PIE_COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#6366f1'];
+// ── Palette ──────────────────────────────────────────────────────────────────
+const C = ['#2563eb','#0891b2','#059669','#d97706','#dc2626','#7c3aed','#be185d','#0f766e','#ca8a04','#4338ca','#0369a1','#9333ea'];
+const STATUS_FILL: Record<string, string> = { Active: '#3b82f6', Pending: '#f59e0b', Disposed: '#10b981', Open: '#f59e0b', Completed: '#10b981' };
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '\u2014';
