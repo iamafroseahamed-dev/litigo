@@ -1003,6 +1003,93 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
   }
   const trend = months.map(m => trendMap.get(m)!);
 
+  const months24: string[] = [];
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months24.push(localIso(d).slice(0, 7));
+  }
+  const filingTrendMap = new Map<string, TrendPoint>();
+  months24.forEach(m => {
+    const d = new Date(`${m}-01T00:00:00`);
+    filingTrendMap.set(m, {
+      month: m,
+      label: d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }),
+      newCases: 0,
+      casesDisposed: 0,
+      hearings: 0,
+      tasksCreated: 0,
+      tasksCompleted: 0,
+    });
+  });
+  for (const c of cases) {
+    const m = monthKey(c.created_at);
+    if (m && filingTrendMap.has(m)) filingTrendMap.get(m)!.newCases += 1;
+    if (m && filingTrendMap.has(m) && isDisposed(c.case_status)) filingTrendMap.get(m)!.casesDisposed += 1;
+  }
+  const filingTrend24 = months24.map(m => filingTrendMap.get(m)!);
+
+  const disposalMap = new Map<string, number>();
+  cases.forEach(c => {
+    const n = (c.nature_of_disposal ?? '').trim();
+    if (!n) return;
+    disposalMap.set(n, (disposalMap.get(n) ?? 0) + 1);
+  });
+  const disposalBreakdown = Array.from(disposalMap.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 12);
+
+  const advocateWorkload: AdvocateWorkloadRow[] = advocates
+    .map(a => ({ advocate: a.advocate, pending: a.pendingCases, disposed: a.disposedCases, upcoming: a.upcomingHearings }))
+    .sort((a, b) => b.pending + b.upcoming - (a.pending + a.upcoming))
+    .slice(0, 12);
+
+  const caseTypesTop = caseTypes.slice(0, 10).map(c => c.label);
+  const sectionsTop = sections.slice(0, 10).map(s => s.label);
+  const advocatesTop = advocates.slice(0, 10).map(a => a.advocate);
+  const courtTypes = courts.slice(0, 8).map(c => c.label);
+
+  const advocateCaseTypeMatrixMap = new Map<string, Record<string, number>>();
+  const advocateSectionMatrixMap = new Map<string, Record<string, number>>();
+  const courtCaseTypeHeatMap = new Map<string, number>();
+
+  for (const c of cases) {
+    const advocate = (c.assigned_advocate_name ?? '').trim();
+    const caseType = (c.case_type ?? '').trim() || deriveCaseType(c.case_number) || 'Unspecified';
+    const section = (c.section ?? '').trim() || 'Unspecified';
+    const court = (c.court_name ?? '').trim() || 'Unspecified';
+    if (advocate && advocatesTop.includes(advocate)) {
+      if (!advocateCaseTypeMatrixMap.has(advocate)) advocateCaseTypeMatrixMap.set(advocate, {});
+      if (!advocateSectionMatrixMap.has(advocate)) advocateSectionMatrixMap.set(advocate, {});
+      const typeRow = advocateCaseTypeMatrixMap.get(advocate)!;
+      const secRow = advocateSectionMatrixMap.get(advocate)!;
+      if (caseTypesTop.includes(caseType)) typeRow[caseType] = (typeRow[caseType] ?? 0) + 1;
+      if (sectionsTop.includes(section)) secRow[section] = (secRow[section] ?? 0) + 1;
+    }
+    if (courtTypes.includes(court) && caseTypesTop.includes(caseType)) {
+      const key = `${court}|||${caseType}`;
+      courtCaseTypeHeatMap.set(key, (courtCaseTypeHeatMap.get(key) ?? 0) + 1);
+    }
+  }
+
+  const advocateCaseTypeMatrix: MatrixRow[] = advocatesTop.map(advocate => ({
+    row: advocate,
+    values: caseTypesTop.reduce((acc, ctype) => ({ ...acc, [ctype]: advocateCaseTypeMatrixMap.get(advocate)?.[ctype] ?? 0 }), {} as Record<string, number>),
+  }));
+
+  const advocateSectionMatrix: MatrixRow[] = advocatesTop.map(advocate => ({
+    row: advocate,
+    values: sectionsTop.reduce((acc, s) => ({ ...acc, [s]: advocateSectionMatrixMap.get(advocate)?.[s] ?? 0 }), {} as Record<string, number>),
+  }));
+
+  const courtCaseTypeHeatmap: CourtCaseTypeCell[] = [];
+  courtTypes.forEach(court => {
+    caseTypesTop.forEach(caseType => {
+      const key = `${court}|||${caseType}`;
+      courtCaseTypeHeatmap.push({ court, caseType, value: courtCaseTypeHeatMap.get(key) ?? 0 });
+    });
+  });
+
   const apiDailyMap = new Map<string, number>();
   for (let i = 29; i >= 0; i--) {
     const d = localIso(addDays(now, -i));
@@ -1022,6 +1109,92 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
     .map(([organizationId, casesCount]) => ({ organizationId, label: organizationId === 'legacy' ? 'Legacy/Unassigned' : organizationId, cases: casesCount }))
     .sort((a, b) => b.cases - a.cases)
     .slice(0, 12);
+
+  const [orgRows, profileRows, advocateRows] = await Promise.all([
+    supabase.from('organizations').select('id, organization_name, short_name, available_credits').range(0, PAGE),
+    supabase.from('profiles').select('organization_id').range(0, PAGE),
+    supabase.from('advocates').select('organization_id, active').eq('active', true).range(0, PAGE),
+  ]);
+
+  const orgCaseById = new Map<string, { total: number; pending: number; disposed: number }>();
+  rawCases.forEach(c => {
+    const key = c.organization_id ?? 'legacy';
+    if (!orgCaseById.has(key)) orgCaseById.set(key, { total: 0, pending: 0, disposed: 0 });
+    const row = orgCaseById.get(key)!;
+    row.total += 1;
+    if (isPending(c.case_status)) row.pending += 1;
+    if (isDisposed(c.case_status)) row.disposed += 1;
+  });
+
+  const userCountByOrg = new Map<string, number>();
+  (profileRows.data ?? []).forEach(r => {
+    const key = (r.organization_id as string | null) ?? 'legacy';
+    userCountByOrg.set(key, (userCountByOrg.get(key) ?? 0) + 1);
+  });
+
+  const advocateCountByOrg = new Map<string, number>();
+  (advocateRows.data ?? []).forEach(r => {
+    const key = (r.organization_id as string | null) ?? 'legacy';
+    advocateCountByOrg.set(key, (advocateCountByOrg.get(key) ?? 0) + 1);
+  });
+
+  const organizationAnalytics: OrganizationAnalyticsRow[] = (orgRows.data ?? []).map((o: Record<string, unknown>) => {
+    const id = String(o.id);
+    const cnt = orgCaseById.get(id) ?? { total: 0, pending: 0, disposed: 0 };
+    return {
+      organizationId: id,
+      label: String(o.short_name || o.organization_name || id),
+      totalCases: cnt.total,
+      pendingCases: cnt.pending,
+      disposedCases: cnt.disposed,
+      creditsRemaining: Number(o.available_credits ?? 0),
+      advocates: advocateCountByOrg.get(id) ?? 0,
+      users: userCountByOrg.get(id) ?? 0,
+    };
+  }).sort((a, b) => b.totalCases - a.totalCases);
+
+  const monthlyStat = (idxFromCurrent: number) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - idxFromCurrent, 1);
+    return localIso(d).slice(0, 7);
+  };
+  const currentMonth = monthlyStat(0);
+  const previousMonth = monthlyStat(1);
+  const monthCounts = (m: string) => {
+    const monthCases = rawCases.filter(c => monthKey(c.created_at) === m);
+    const currentToday = localIso(now);
+    return {
+      totalCases: monthCases.length,
+      pendingCases: monthCases.filter(c => isPending(c.case_status)).length,
+      disposedCases: monthCases.filter(c => isDisposed(c.case_status)).length,
+      upcomingHearings30: monthCases.filter(c => c.next_hearing_date && String(c.next_hearing_date) >= currentToday && String(c.next_hearing_date) <= in30).length,
+      urgentHearings7: monthCases.filter(c => c.next_hearing_date && String(c.next_hearing_date) >= currentToday && String(c.next_hearing_date) <= in7).length,
+      activeCases: monthCases.filter(c => isActive(c.case_status)).length,
+      updateRequired: monthCases.filter(c => isUpdateRequired(c)).length,
+      claPartyCases: monthCases.filter(isClaParty).length,
+      sensitiveCases: monthCases.filter(isSensitive).length,
+      totalAdvocates: new Set(monthCases.map(c => (c.assigned_advocate_name ?? '').trim()).filter(Boolean)).size,
+      averageDisposalDays: averageDisposalDays,
+      caseSuccessRate: caseSuccessRate,
+    };
+  };
+
+  const cur = monthCounts(currentMonth);
+  const prev = monthCounts(previousMonth);
+  const spark = trend.slice(-6).map(t => t.newCases);
+  const kpiTrends: KpiTrends = {
+    totalCases: toTrend(cur.totalCases, prev.totalCases, spark),
+    pendingCases: toTrend(cur.pendingCases, prev.pendingCases, spark),
+    disposedCases: toTrend(cur.disposedCases, prev.disposedCases, trend.slice(-6).map(t => t.casesDisposed)),
+    upcomingHearings30: toTrend(cur.upcomingHearings30, prev.upcomingHearings30, trend.slice(-6).map(t => t.hearings)),
+    urgentHearings7: toTrend(cur.urgentHearings7, prev.urgentHearings7, trend.slice(-6).map(t => t.hearings)),
+    activeCases: toTrend(cur.activeCases, prev.activeCases, spark),
+    updateRequired: toTrend(cur.updateRequired, prev.updateRequired, trend.slice(-6).map(t => t.tasksCreated - t.tasksCompleted)),
+    claPartyCases: toTrend(cur.claPartyCases, prev.claPartyCases, spark),
+    sensitiveCases: toTrend(cur.sensitiveCases, prev.sensitiveCases, spark),
+    totalAdvocates: toTrend(cur.totalAdvocates, prev.totalAdvocates, spark),
+    averageDisposalDays: toTrend(cur.averageDisposalDays, prev.averageDisposalDays, trend.slice(-6).map(t => t.casesDisposed)),
+    caseSuccessRate: toTrend(cur.caseSuccessRate, prev.caseSuccessRate, trend.slice(-6).map(t => t.casesDisposed)),
+  };
 
   const aiCases: AiCaseSnapshot[] = aiRows.map(row => {
     const c = caseById.get(row.case_id);
@@ -1048,12 +1221,18 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
 
   return {
     kpis,
+    kpiTrends,
     districts,
     districtDetails,
     sections,
     caseTypes,
+    caseTypeBreakdown: toCategoryPct(caseTypes),
     sectionAdvocates,
     advocates,
+    advocateWorkload,
+    advocateCaseTypeMatrix,
+    advocateSectionMatrix,
+    courtCaseTypeHeatmap,
     leaderboard,
     taskAssignees,
     upcomingHearings,
@@ -1061,12 +1240,15 @@ export async function fetchExecutiveAnalytics(orgId?: string | null, filters?: D
     connectedTotal,
     causeList,
     trend,
+    filingTrend24,
+    disposalBreakdown,
     advocateStatusDistribution,
     aiCases,
     courts,
     taskProgress,
     apiDailyCalls,
     orgCases,
+    organizationAnalytics,
     filterMeta,
   };
 }
