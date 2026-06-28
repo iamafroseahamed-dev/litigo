@@ -285,7 +285,7 @@ export default function AboutPage() {
                 {DEVELOPER_EMAIL}
               </a>
               <a
-                href="https://www.afroseahamed.com"
+                href="https://www.tnlegal.com"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 font-medium text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
