@@ -4,8 +4,8 @@
 
 export const APP_NAME = 'Adalat360';
 export const APP_VERSION = 'v1.0';
-export const DEVELOPER_NAME = 'Afrose Ahamed';
-export const DEVELOPER_EMAIL = 'iamafroseahamed@gmail.com';
+export const DEVELOPER_NAME = 'TN Legal';
+export const DEVELOPER_EMAIL = 'tnlegal@gmail.com';
 
 // Plain-text attribution block (e.g. for exported reports / emails).
 export const ATTRIBUTION_TEXT = `Developed by ${DEVELOPER_NAME}\n${DEVELOPER_EMAIL}`;
