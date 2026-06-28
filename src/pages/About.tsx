@@ -291,7 +291,7 @@ export default function AboutPage() {
                 className="inline-flex items-center gap-2 font-medium text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
               >
                 <Globe className="h-4 w-4" />
-                www.afroseahamed.com
+                www.tnlegal.com
               </a>
             </div>
             <p className="text-sm leading-relaxed text-muted-foreground">
