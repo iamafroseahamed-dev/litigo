@@ -738,7 +738,7 @@ export function CaseDetailsModal({
               <TabsTrigger value="notes">Notes</TabsTrigger>
               <TabsTrigger value="tasks">Tasks</TabsTrigger>
               <TabsTrigger value="connected">Connected Cases</TabsTrigger>
-              <TabsTrigger value="documents">Documents</TabsTrigger>
+              {/* Documents tab removed — document management not required in modal */}
             </TabsList>
           </div>
 
@@ -943,20 +943,7 @@ export function CaseDetailsModal({
             </div>
           </TabsContent>
 
-          <TabsContent value="documents">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <SourceBadge label="Internal Record" />
-                <span>Store documents and evidence associated with this case.</span>
-              </div>
-              <div className="rounded-lg border border-dashed border-border/70 bg-muted/50 p-6 text-center">
-                <p className="text-sm font-semibold text-foreground">No documents available</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Document management is not configured for this case yet. Upload case files from the main case record page or contact your administrator to enable document storage.
-                </p>
-              </div>
-            </div>
-          </TabsContent>
+          {/* Documents tab removed — no document section in modal */}
         </div>
         </Tabs>
       </DialogContent>
